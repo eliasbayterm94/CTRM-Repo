@@ -1,0 +1,5 @@
+/manifest.json  /manifest.json  200
+/sw.js          /sw.js          200
+/favicon.ico    /favicon.ico    200
+/icons/*        /icons/:splat   200
+/*              /index.html     200

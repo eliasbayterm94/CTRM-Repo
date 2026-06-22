@@ -1,290 +1,243 @@
-# Diseño técnico — Capa operativa de neteo de posiciones en bolsa (KC)
+# Diseño técnico — Motor de asignación automática de compras/fixings
 
 **Proyecto:** Forest Coffee CTRM
 **Autor:** Análisis asistido (Claude Code)
-**Fecha:** 2026-06-22
-**Estado:** PROPUESTA — pendiente de revisión antes de implementar
+**Fecha:** 2026-06-22 · **Versión:** 2 (reemplaza el enfoque de "neteo a lotes enteros")
+**Estado:** PROPUESTA — pendiente de visto bueno antes de implementar
 **Branch:** `claude/friendly-mccarthy-1pt08x`
+
+> **Cambio de enfoque respecto a la v1:** El problema NO es el número de lotes en
+> bolsa (se pueden abrir/cerrar parciales con el bróker sin dificultad), así que
+> **se descarta el redondeo a lotes enteros y la banda de tolerancia**. El dolor
+> real es **la asignación manual** de cada compra física a varios contratos
+> ("50 sacos a éste, 100 a aquél…"). Este documento resuelve eso.
 
 ---
 
 ## 1. Objetivo
 
-Reducir dos problemas que el equipo reporta como **insostenibles**:
+Eliminar el trabajo manual de **repartir cada compra física / fixing entre los
+contratos y hedges abiertos**, sin perder la trazabilidad ni el P&L por cliente.
 
-1. **Demasiados lotes KC reales** abiertos/cerrados con el bróker.
-2. **Demasiados registros de cierre parcial** en el sistema (un cierre por cada hedge).
-
-Sin perder la trazabilidad analítica por contrato/cliente que existe hoy.
-
-**Estrategia elegida:** *Capa operativa separada.* Los hedges siguen siendo el
-**requerimiento de cobertura** (analítico, fraccional, por contrato). Encima se
-añade una capa nueva de **posiciones reales en bolsa**, neteadas por mes de
-entrega KC y expresadas en **lotes enteros**. Solo se registra una operación
-real cuando cambia el número de lotes enteros netos.
+**Decisiones tomadas:**
+- **Auto-distribución por contrato** (se mantiene P&L por cliente).
+- **Reparto proporcional** a los `sacos_abiertos` de cada hedge del mes KC.
+- Sin redondeo a lotes enteros (se permiten parciales).
 
 ---
 
-## 2. Diagnóstico del estado actual
+## 2. Por qué hoy la asignación es manual (causa raíz confirmada con las vistas)
 
-### 2.1 Arquitectura
-- App de una sola página: toda la lógica en `index.html` (~13.9k líneas; JS entre 4071–13850).
-- Backend Supabase (PostgreSQL). El frontend lee **vistas** y escribe en **tablas base**.
-- Estado en memoria (`index.html:4079`): `CONTRACTS, HEDGES, PURCHASES, CLOSURES, ROLLS, KC_CAL, OPTIONS`.
+El P&L de cada cierre se calcula así (vista `v_pnl`):
 
-### 2.2 Modelo actual (la "cruz")
-```
-CONTRATO (venta)  ──1:N──►  HEDGE (cobertura KC)  ──1:N──►  CLOSURE (+ PURCHASE)
-contracts                   hedge_positions                hedge_closures / physical_purchases
+```sql
+pnl_usd = (precio_cierre_clb - precio_entrada_clb) * sacos * 70 * 2.20462 / 100
 ```
 
-### 2.3 Conversión física → bolsa (`index.html:4073-4075`)
+Y **cada hedge tiene su propio `precio_entrada_clb`** (`hedge_positions`). Por eso,
+para saber el P&L, el sistema necesita saber **a qué hedge pertenece cada saco
+cerrado** → hoy obliga al operador a asignar a mano.
+
+Flujo manual actual (`cmSave()`, `index.html:5796-5886`):
+1. El operador ingresa la compra total.
+2. En el paso 2, **reparte sacos hedge por hedge a mano**.
+3. Por cada asignación se inserta `physical_purchases` + `hedge_closures`.
+
 ```js
-const KG_SACO = 70;        // 1 saco = 70 kg
-const KG_KC   = 17009.73;  // 1 lote KC = 17 009,73 kg ≈ 243 sacos
-// contratos = (sacos * 70) / 17009.73   → se guarda en DECIMAL
+// index.html:5825 — un registro por asignación MANUAL
+for (const a of assignments) {
+  insert physical_purchases {...}
+  insert hedge_closures { sacos: a.sac, precio_entrada_clb: a.precioEntrada, ... }
+}
 ```
-> Spec real del contrato Coffee "C" (KC): **37 500 lb = 17 009,71 kg**.
-> ⇒ **1 lote ≈ 243,0 sacos de 70 kg.** (A confirmar, ver §9.)
 
-### 2.4 Causa raíz de la multiplicidad
-| # | Problema | Evidencia |
-|---|----------|-----------|
-| 1 | Los contratos se manejan como **fracciones decimales**; nunca se netean a lotes enteros. | `(kg/KG_KC).toFixed(2)` en `index.html:4098-4101, 5097-5099` |
-| 2 | Diseño rígido **"1 hedge = 1 cierre"**. El cierre masivo itera por hedge y crea un `physical_purchase` + un `hedge_closure` por cada uno. | `cmSave()` loop en `index.html:5825` |
-| 3 | **Sin neteo ni agrupación** por `contract_id` ni por mes KC. | `cmSave()` `index.html:5796-5886` |
-| 4 | Los rolls inflan el historial: un registro por hedge. | `executeRollMasivo()` `index.html:12756-12817` |
+Cómo impactan los datos (de las vistas):
+- `physical_purchases.contract_id` → alimenta `v_contracts.sacos_comprados`,
+  `cobertura_pct`, `estado_cobertura`.
+- `hedge_closures.hedge_id` → alimenta `v_hedge_positions.sacos_cerrados` /
+  `sacos_abiertos` y el `v_pnl`.
 
-### 2.5 Hallazgo crítico
-El conteo de contratos (`contratos_kc`, `contratos_kc_abiertos`, `sacos_abiertos`,
-`estado_cobertura`, `roll_status`) **se calcula en vistas SQL de Supabase**
-(`v_contracts`, `v_hedge_positions`, `v_pnl`), que **no están en el repositorio**.
-Parte de este rediseño debe ocurrir en Supabase, no solo en `index.html`.
+**Conclusión:** la asignación es un subproducto del cálculo de P&L por precio de
+entrada. La solución es **calcular el reparto automáticamente**, no eliminar la
+atribución.
 
 ---
 
-## 3. Modelo objetivo (capa operativa separada)
+## 3. Solución: motor de asignación proporcional
 
-Separamos explícitamente **dos planos**:
+El operador registra **una sola entrada** (un fixing/compra) con:
+
+| Campo | Ejemplo | Uso |
+|-------|---------|-----|
+| `kc_month` + `kc_year` | `K` / `2026` | Selecciona el universo de hedges a cerrar |
+| `sacos` | `300` | Cantidad total a distribuir |
+| `precio_cierre_clb` | `185.40` | Precio KC del fixing (igual para todos) |
+| `precio_compra_usd_lb` | `3.10` | Lado físico (compra) |
+| `fecha` | `2026-06-22` | Fecha de la operación |
+| `region` *(opcional)* | `Perú` | Filtro opcional del universo |
+
+El sistema:
+1. Toma **todos los hedges abiertos** de ese `kc_month/kc_year`
+   (`sacos_abiertos > 0`), filtrados por región si se indicó.
+2. Calcula el total abierto: `total_open = Σ sacos_abiertos`.
+3. Reparte `sacos` **proporcionalmente** a `sacos_abiertos` de cada hedge.
+4. Crea automáticamente `physical_purchases` + `hedge_closures` por hedge.
+5. El P&L por cliente sale solo, vía `v_pnl`, exactamente como hoy.
+
+> El operador pasa de **N decisiones manuales** a **1 entrada + confirmar**.
+
+### 3.1 Algoritmo de reparto (proporcional con resto mayor)
+
+Para que la suma cuadre exacto al saco (sin perder ni inventar sacos):
 
 ```
-PLANO ANALÍTICO (requerimiento)            PLANO OPERATIVO (realidad en bolsa)
-─────────────────────────────             ──────────────────────────────────
-CONTRATO → HEDGE → CLOSURE                 exchange_trades  (lotes ENTEROS)
-(fraccional, por cliente)                       │
-   │ se agrega por mes KC                       ▼
-   ▼                                        v_exchange_net (posición neta por mes)
-v_hedge_requirement_by_month
-(sacos abiertos → lotes requeridos)             ▲
-   │                                            │
-   └──────────►  CONCILIACIÓN / DELTA  ◄────────┘
-                 v_exchange_rebalance
-                 "abrir/cerrar X lotes en mes M"
+total_open = Σ open_i                        (open_i = sacos_abiertos del hedge i)
+raw_i      = sacos_total * open_i / total_open
+alloc_i    = floor(raw_i)                     (piso entero)
+resto      = sacos_total − Σ alloc_i
+→ repartir 'resto' sumando +1 saco a los hedges con mayor parte fraccional
+  (desempate: el de Last Trade Day más cercano primero)
+restricción: alloc_i ≤ open_i  (no cerrar más de lo abierto;
+             si por tope sobra, se redistribuye a hedges con capacidad)
 ```
 
-- **Plano analítico = lo que existe hoy, sin cambios disruptivos.** Sigue dando
-  cobertura %, P&L por cliente, rolls analíticos, etc.
-- **Plano operativo = nuevo.** Es la **fuente de verdad de lo que realmente
-  tienes en el bróker**: solo lotes enteros, pocas operaciones, neteado por mes.
-- Una **vista de conciliación** compara *requerido* vs *real* y dice exactamente
-  cuántos lotes abrir o cerrar (en enteros) por mes. Ahí el operador actúa una
-  sola vez por mes/sesión, no una vez por hedge.
+**Ejemplo.** Fixing de 300 sacos en KC K-2026, 3 hedges abiertos:
+
+| Hedge | abiertos | proporción | asignado |
+|-------|---------:|-----------:|---------:|
+| HG-12 | 400 | 44,4 % | 133 |
+| HG-19 | 300 | 33,3 % | 100 |
+| HG-25 | 200 | 22,2 % | 67 |
+| **Σ** | **900** | 100 % | **300** ✓ |
+
+Todo automático. Si el operador quiere ajustar un caso puntual, puede
+sobreescribir (ver §5.3).
+
+### 3.2 Casos borde y políticas
+
+| Caso | Política propuesta |
+|------|--------------------|
+| `sacos` > `total_open` (sobre-fijación) | Avisar y **topar** al total abierto; el excedente no se asigna (decisión abierta, §8). |
+| No hay hedges abiertos en el mes | Bloquear con mensaje claro. |
+| Hedge con `roll_status` `EXPIRED`/`CLOSED` | Se excluye del universo. |
+| Reparto deja a un hedge con 0 sacos (muy chico) | Permitido; simplemente no recibe asignación. |
+| Redondeo | Método de **resto mayor** para que Σ asignado = `sacos` exacto. |
 
 ---
 
-## 4. Nuevo modelo de datos (Supabase)
+## 4. Dónde vive la lógica: función en Postgres (recomendado)
 
-### 4.1 Tabla nueva: `exchange_trades` (operaciones reales en bolsa)
-Fuente de verdad de la posición real. **Solo lotes enteros.**
+Como tienes acceso total a Supabase, lo más robusto es una **función SQL (RPC)
+atómica**, en vez de un bucle en el navegador. Ventajas: atomicidad (todo o nada),
+redondeo consistente, una sola llamada de red.
 
 ```sql
-create table exchange_trades (
-  id            text primary key,           -- 'XT-2026-001'
-  kc_month      text not null,              -- 'H','K','N','U','Z'
-  kc_year       int  not null,
-  side          text not null check (side in ('BUY','SELL')),
-  lots          int  not null check (lots > 0),   -- ENTERO
-  price_clb     numeric not null,           -- precio de ejecución c/lb
-  fecha         date not null,
-  motivo        text not null check (motivo in ('OPEN','CLOSE','ROLL_OUT','ROLL_IN','ADJUST','OPENING_BALANCE')),
-  broker_ref    text,                       -- folio/ticket del bróker (opcional)
-  notas         text,
-  created_at    timestamptz default now()
-);
+-- PROPUESTA (a afinar): reparte un fixing proporcionalmente e inserta los cierres.
+create or replace function apply_fixing(
+  p_kc_month            text,
+  p_kc_year             int,
+  p_sacos               int,
+  p_precio_cierre_clb   numeric,
+  p_precio_compra_usd_lb numeric,
+  p_fecha               date,
+  p_region              text default null,
+  p_tipo                text default 'Purchase'
+) returns table (hedge_id text, contract_id text, sacos int, pnl_usd numeric)
+language plpgsql as $$
+declare
+  v_total_open bigint;
+begin
+  -- 1) universo de hedges abiertos del mes (con filtro opcional de región)
+  create temp table _open on commit drop as
+    select h.id as hedge_id, h.contract_id, h.precio_entrada_clb,
+           h.sacos_abiertos as open_sacos
+    from v_hedge_positions h
+    left join contracts c on c.id = h.contract_id
+    where h.kc_month = p_kc_month and h.kc_year = p_kc_year
+      and h.sacos_abiertos > 0
+      and (p_region is null or c.region = p_region);
+
+  select coalesce(sum(open_sacos),0) into v_total_open from _open;
+  if v_total_open = 0 then
+    raise exception 'No hay hedges abiertos en % %', p_kc_month, p_kc_year;
+  end if;
+
+  -- 2) reparto proporcional + resto mayor  (detalle omitido por brevedad)
+  --    produce _alloc(hedge_id, contract_id, precio_entrada_clb, sacos)
+
+  -- 3) inserts atómicos en physical_purchases + hedge_closures
+  --    (IDs vía secuencias dedicadas — ver §6)
+
+  -- 4) devolver el desglose para que el front muestre el preview/confirmación
+  return query select a.hedge_id, a.contract_id, a.sacos,
+    (p_precio_cierre_clb - a.precio_entrada_clb)*a.sacos*70*2.20462/100
+  from _alloc a;
+end;
+$$;
 ```
 
-### 4.2 Vista nueva: `v_exchange_net` (posición neta real por mes)
-```sql
-create view v_exchange_net as
-select
-  kc_month, kc_year,
-  sum(case when side='BUY'  then lots else -lots end)              as net_lots,
-  sum(case when side='SELL' then lots else 0 end)                  as sold_lots,
-  sum(case when side='BUY'  then lots else 0 end)                  as bought_lots,
-  -- precio promedio ponderado de la posición vendida (corta = hedge de venta física)
-  sum(price_clb * lots) filter (where side='SELL') /
-      nullif(sum(lots) filter (where side='SELL'),0)               as avg_sell_clb
-from exchange_trades
-group by kc_month, kc_year;
-```
-
-### 4.3 Vista nueva: `v_hedge_requirement_by_month` (requerimiento agregado)
-Agrega el requerimiento analítico **a lotes** por mes KC. **Aquí vive la política
-de redondeo** (ver §6).
-```sql
-create view v_hedge_requirement_by_month as
-select
-  h.kc_month, h.kc_year,
-  sum(h.sacos_abiertos)                                  as sacos_abiertos,
-  sum(h.sacos_abiertos) * 70.0 / 17009.73                as lots_fraccional,
-  round(sum(h.sacos_abiertos) * 70.0 / 17009.73)         as lots_requeridos  -- política: redondeo al entero más cercano
-from v_hedge_positions h
-where h.sacos_abiertos > 0
-group by h.kc_month, h.kc_year;
-```
-
-### 4.4 Vista nueva: `v_exchange_rebalance` (la recomendación operativa)
-```sql
-create view v_exchange_rebalance as
-select
-  coalesce(r.kc_month, n.kc_month)            as kc_month,
-  coalesce(r.kc_year , n.kc_year )            as kc_year,
-  coalesce(r.lots_requeridos,0)               as lots_requeridos,
-  coalesce(n.net_lots,0) * -1                 as lots_actuales,   -- corto = positivo
-  coalesce(r.lots_requeridos,0) - (coalesce(n.net_lots,0)*-1)  as delta_lots
-from v_hedge_requirement_by_month r
-full outer join v_exchange_net n
-  on r.kc_month=n.kc_month and r.kc_year=n.kc_year;
-```
-> `delta_lots > 0` ⇒ faltan lotes ⇒ **vender** (abrir cobertura corta).
-> `delta_lots < 0` ⇒ sobran lotes ⇒ **comprar/levantar** (cerrar cobertura).
-> `delta_lots = 0` ⇒ no operar. **Con banda de tolerancia (§6), solo se actúa
-> cuando |delta| supera el umbral.**
-
-### 4.5 Lo que NO cambia
-`contracts`, `hedge_positions`, `hedge_closures`, `physical_purchases`,
-`roll_log`, `options_positions` y sus vistas **se mantienen** para preservar
-analítica y P&L por cliente. El cierre parcial sigue existiendo como **evento
-analítico**, pero **deja de disparar una operación de bolsa**.
+**Alternativa sin SQL:** replicar el mismo algoritmo en `index.html` y hacer los
+inserts en bucle (como hoy, pero **calculados, no manuales**). Es más rápido de
+entregar pero menos atómico. *(Decisión abierta, §8.)*
 
 ---
 
 ## 5. Cambios en `index.html`
 
-### 5.1 Estado y carga
-- `index.html:4079` → añadir arrays `EXCHANGE_TRADES`, `EXCHANGE_NET`, `REBALANCE`.
-- `loadAll()` `index.html:4202-4222` → añadir 3 lecturas:
-  `exchange_trades`, `v_exchange_net`, `v_exchange_rebalance`.
+### 5.1 Pantalla de fixing simplificada
+Reemplaza el paso 2 manual de `cmSave()` por **un solo formulario**: mes KC,
+sacos totales, precio de cierre, precio de compra, fecha, (región opcional).
 
-### 5.2 Constantes
-- Añadir junto a `index.html:4073-4075`:
-  ```js
-  const SACOS_POR_LOTE = KG_KC / KG_SACO;   // ≈ 243
-  const BANDA_TOLERANCIA_LOTES = 0.5;        // umbral de rebalanceo (§6, configurable)
-  const POLITICA_REDONDEO = 'cercano';       // 'cercano' | 'arriba' | 'abajo'
-  ```
-
-### 5.3 Pantalla nueva: "Posición de bolsa / Rebalanceo"
-Una vista por mes KC que muestra: `lots_requeridos`, `lots_actuales`, `delta`,
-y un botón **"Registrar operación"** que inserta UN `exchange_trade` (entero).
-Sustituye el flujo de "muchos cierres parciales" por "un rebalanceo por mes".
-
-### 5.4 Función nueva: `registrarOperacionBolsa()`
+### 5.2 Llamada al motor
 ```js
-// Inserta UNA fila en exchange_trades (lotes enteros) y refresca v_exchange_*.
-// Reemplaza el efecto "bolsa" de saveCompra()/cmSave() para la parte operativa.
+const { data, error } = await sb.rpc('apply_fixing', {
+  p_kc_month, p_kc_year, p_sacos, p_precio_cierre_clb,
+  p_precio_compra_usd_lb, p_fecha, p_region
+});
+// data = desglose por hedge (para mostrar y confirmar)
 ```
 
-### 5.5 Ajuste de los cierres existentes (desacople)
-- `saveCompra()` `index.html:5114-5204` y `cmSave()` `index.html:5796-5886`:
-  siguen registrando el **fixing analítico** (P&L por cliente) en `hedge_closures`,
-  pero **ya no se interpretan como operación de bolsa**. La bolsa se mueve solo
-  desde la pantalla de rebalanceo.
-- Opción de consolidación de registros: agrupar `assignments` por `contract_id`
-  antes del insert para reducir filas (línea `index.html:5825`). *(Decisión abierta, §9.)*
+### 5.3 Preview + override opcional
+Antes de confirmar, mostrar la tabla **ya calculada** (como el ejemplo de §3.1).
+El operador normalmente solo confirma; si necesita, puede editar una fila y el
+resto se recalcula. Así se conserva la flexibilidad sin el trabajo manual diario.
 
-### 5.6 Rolls operativos
-- Nuevo flujo: rolar la **posición neta** por mes = 1 `exchange_trade` motivo
-  `ROLL_OUT` + 1 `ROLL_IN`, en lugar de N registros por hedge. `roll_log` analítico
-  se mantiene para el plano por cliente.
+### 5.4 Lo que se mantiene
+`saveCompra()` (cierre de un solo hedge) puede quedarse como camino rápido para
+casos 1-a-1. `roll_log`, opciones y P&L por cliente **no cambian**.
 
 ---
 
-## 6. Política de neteo y rebalanceo (clave anti-churn)
-
-El objetivo de **menos operaciones** se logra con dos parámetros:
-
-1. **Redondeo** del requerimiento fraccional a lotes enteros:
-   - `cercano` (recomendado): redondeo al entero más próximo.
-   - `arriba`: nunca quedar sub-cubierto (más conservador, más lotes).
-   - `abajo`: nunca sobre-cubrir (menos lotes, asume base física).
-2. **Banda de tolerancia (histéresis):** solo rebalancear cuando
-   `|delta_lots| ≥ BANDA_TOLERANCIA_LOTES`. Esto evita abrir/cerrar por cada
-   fixing pequeño. Ej.: con banda 0,5, un fixing de 50 sacos (~0,2 lotes) **no**
-   genera operación; se acumula hasta cruzar el umbral.
-
-> Este par (redondeo + banda) es el corazón de la solución: **decenas de fixings
-> parciales se convierten en unas pocas operaciones enteras por mes.**
+## 6. Detalles a cerrar en implementación
+- **IDs:** hoy se generan en el cliente por conteo (`'CL-'+length+1`), propenso a
+  carreras. Con RPC conviene **secuencias** (`create sequence …`) o
+  `max(id)+1` dentro de la transacción. A decidir.
+- **`registrado_por`:** marcar `'auto'` para distinguir fixings automáticos.
+- **Auditoría:** opcional, una columna `batch_id` que agrupe todos los cierres de
+  un mismo fixing (facilita revertir/anular en bloque).
 
 ---
 
-## 7. Conciliación de P&L (importante)
-
-Con neteo, los **precios de ejecución reales** existen a nivel de lote entero, no
-por cliente. Por eso habrá dos P&L que se concilian:
-
-- **P&L analítico por cliente** (como hoy): `(precio_cierre − precio_entrada) × sacos`.
-- **P&L operativo real** (nuevo): desde `exchange_trades` con precios de fill reales.
-- **Diferencia = "base de neteo"**: una línea de conciliación que captura el
-  desfase entre el precio analítico asignado y el fill real promedio. Se reporta,
-  no se pierde.
-
-Esto mantiene intacta la contabilidad por cliente y a la vez refleja la caja real.
+## 7. Migración
+Cambio **aditivo**: no migra datos existentes. El flujo viejo manual puede
+convivir como override. Pasos:
+1. Crear `apply_fixing()` (+ secuencias / `batch_id` si se aprueban).
+2. Versionar el SQL en `docs/sql/` (las vistas actuales ya quedaron en
+   `docs/sql/current-views.sql`).
+3. Nuevo formulario de fixing + preview en `index.html`.
+4. Validar en paralelo (P&L y coberturas deben coincidir con el flujo manual)
+   antes de jubilar el paso 2 manual.
 
 ---
 
-## 8. Plan de migración (cuando aprobemos el diseño)
-
-1. **Esquema:** crear `exchange_trades` + las 3 vistas nuevas. Versionar el SQL en
-   `docs/sql/` (hoy no hay esquema en el repo).
-2. **Backfill:** sembrar una posición inicial por mes KC con motivo
-   `OPENING_BALANCE` = lotes netos requeridos hoy (redondeados). Así el sistema
-   arranca conciliado.
-3. **Frontend:** añadir carga + pantalla de rebalanceo (read-only primero).
-4. **Desacople:** quitar el efecto "bolsa" de los cierres analíticos.
-5. **Rolls operativos** y consolidación de registros.
-6. **Validación** en paralelo (la posición neta nueva debe igualar la suma
-   redondeada de hoy) antes de apagar el flujo viejo.
+## 8. Decisiones abiertas
+- [ ] Sobre-fijación (`sacos` > abiertos): ¿topar y avisar, o permitir excedente?
+- [ ] Motor en **RPC de Postgres** (recomendado) vs bucle en `index.html`.
+- [ ] Estrategia de IDs (secuencias vs conteo) y `batch_id` para anular en bloque.
+- [ ] ¿`region` como filtro fijo del fixing, u opcional?
+- [ ] ¿Mantener `saveCompra()` 1-a-1 como atajo, o unificar todo en el motor?
 
 ---
 
-## 9. Lo que necesito de ti para implementar
-
-1. **Definiciones de las vistas SQL** (correr en Supabase y pasarme el resultado):
-   ```sql
-   select table_name, view_definition
-   from information_schema.views
-   where table_name in ('v_contracts','v_hedge_positions','v_pnl','v_options')
-   order by table_name;
-   ```
-2. **Confirmar la spec del lote KC:** ¿37 500 lb (≈243 sacos)? El código usa
-   `KG_KC = 17009.73`, consistente, pero conviene confirmarlo con operaciones.
-3. **Política de redondeo** preferida: `cercano` / `arriba` / `abajo` (§6).
-4. **Banda de tolerancia** inicial (sugerido: 0,5 lote).
-5. **Consolidación de registros analíticos:** ¿agrupar cierres por `contract_id`
-   (menos filas) o mantener 1 por hedge para auditoría? (§5.5)
-
----
-
-## 10. Decisiones abiertas (resumen)
-- [ ] Redondeo: cercano / arriba / abajo
-- [ ] Banda de tolerancia (lotes)
-- [ ] ¿Consolidar `hedge_closures` por contrato o no?
-- [ ] ¿Rebalanceo manual (operador confirma) o sugerido-automático?
-- [ ] ¿Versionar todo el esquema SQL en el repo? (recomendado: sí)
-
----
-
-*Este documento es solo diseño. No se ha modificado ninguna lógica de la
-aplicación. La implementación arranca tras tu visto bueno sobre las decisiones
-de §9–§10.*
+*Solo diseño. No se ha modificado ninguna lógica de la aplicación. La
+implementación arranca tras tu visto bueno sobre §8.*

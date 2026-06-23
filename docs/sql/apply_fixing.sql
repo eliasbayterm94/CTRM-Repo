@@ -74,6 +74,7 @@ create or replace function apply_fixing(
 )
 language plpgsql
 as $$
+#variable_conflict use_column
 declare
   v_total_bolsa   bigint;
   v_total_nobolsa bigint;

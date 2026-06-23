@@ -13237,55 +13237,81 @@ function renderDashCharts(contracts, hedges) {
   if (!el) return;
 
   const openH = (hedges || []).filter(h => h.sacos_abiertos > 0);
+  const hedgeByContract = {};
+  openH.forEach(h => { hedgeByContract[h.contract_id] = (hedgeByContract[h.contract_id] || 0) + (h.sacos_abiertos || 0); });
+
+  const conv = KG_SACO * LB_PER_KG / 100; // sacos × c/lb → USD
   const M = {};
-  const ensure = k => (M[k] = M[k] || { hedge:0, open:0 });
-  openH.forEach(h => { ensure(h.kc_month + h.kc_year).hedge += h.sacos_abiertos || 0; });
-  (contracts || []).forEach(c => { if ((c.sacos_abiertos || 0) > 0) ensure(c.kc_month + c.kc_year).open += c.sacos_abiertos || 0; });
+  const ensure = k => (M[k] = M[k] || { hedge:0, open:0, peSum:0, pfSum:0, pfSac:0, mtm:0, hasMkt:false });
+
+  openH.forEach(h => {
+    const k = h.kc_month + h.kc_year, m = ensure(k), s = h.sacos_abiertos || 0;
+    m.hedge += s;
+    m.peSum += (h.precio_entrada_clb || 0) * s;
+    const mkt = KC_PRICES[k];
+    if (mkt) { m.mtm += (mkt - (h.precio_entrada_clb || 0)) * s * conv; m.hasMkt = true; }
+  });
+  (contracts || []).forEach(c => {
+    const s = c.sacos_abiertos || 0; if (s <= 0) return;
+    const k = c.kc_month + c.kc_year, m = ensure(k);
+    m.open += s;
+    if (c.precio_kc_fijado != null) {
+      m.pfSum += c.precio_kc_fijado * s; m.pfSac += s;
+      const exp = Math.max(s - (hedgeByContract[c.id] || 0), 0), mkt = KC_PRICES[k];
+      if (mkt && exp > 0) { m.mtm += (c.precio_kc_fijado - mkt) * exp * conv; m.hasMkt = true; }
+    }
+  });
 
   const keys = Object.keys(M).sort();
   if (!keys.length) { el.innerHTML = ''; return; }
 
   const lbl = k => 'KC ' + (KC_MONTH_LABELS[k.slice(0,1)] || k.slice(0,1)) + " '" + k.slice(3);
-  const dir = neto => ({
-    col: neto > 0 ? 'var(--ok)' : neto < 0 ? 'var(--crit)' : 'var(--muted)',
-    txt: neto > 0 ? '🟢 LARGO' : neto < 0 ? '🔴 CORTO' : '⚪ NEUTRO'
-  });
+  const dir = n => ({ col: n > 0 ? 'var(--ok)' : n < 0 ? 'var(--crit)' : 'var(--muted)', txt: n > 0 ? 'LARGO' : n < 0 ? 'CORTO' : 'NEUTRO' });
+  const px = x => x ? fmt(x, 1) : '—';
 
-  let tH = 0, tO = 0;
+  let tH=0, tO=0, tPe=0, tPf=0, tPfSac=0, tMtm=0, anyMkt=false;
   const rows = keys.map(k => {
     const m = M[k];
-    const sinH = Math.max(m.open - m.hedge, 0);
-    const neto = m.hedge - m.open;
-    tH += m.hedge; tO += m.open;
+    const sinH = Math.max(m.open - m.hedge, 0), neto = m.hedge - m.open;
+    const avgH = m.hedge > 0 ? m.peSum / m.hedge : 0;
+    const avgC = m.pfSac > 0 ? m.pfSum / m.pfSac : 0;
+    const mkt = KC_PRICES[k] || 0;
+    tH+=m.hedge; tO+=m.open; tPe+=m.peSum; tPf+=m.pfSum; tPfSac+=m.pfSac; if(m.hasMkt){tMtm+=m.mtm; anyMkt=true;}
     const d = dir(neto);
     return '<tr>' +
       '<td>' + lbl(k) + '</td>' +
       '<td class="text-right mono">' + fmt(m.hedge) + '</td>' +
       '<td class="text-right mono">' + fmt(sinH) + '</td>' +
-      '<td class="text-right mono">' + fmt(m.open) + '</td>' +
-      '<td class="text-right mono" style="color:' + d.col + ';font-weight:700">' + (neto > 0 ? '+' : '') + fmt(neto) + '</td>' +
-      '<td style="color:' + d.col + ';font-weight:700">' + d.txt + '</td>' +
+      '<td class="text-right mono" style="color:' + d.col + ';font-weight:700">' + (neto>0?'+':'') + fmt(neto) + ' ' + d.txt + '</td>' +
+      '<td class="text-right mono">' + px(avgC) + '</td>' +
+      '<td class="text-right mono">' + px(avgH) + '</td>' +
+      '<td class="text-right mono">' + (mkt ? fmt(mkt,1) : '<span style="color:var(--muted)">s/precio</span>') + '</td>' +
+      '<td class="text-right mono" style="color:' + (m.hasMkt ? (m.mtm>=0?'var(--ok)':'var(--crit)') : 'var(--muted)') + ';font-weight:700">' + (m.hasMkt ? fmtUSD(m.mtm) : '—') + '</td>' +
     '</tr>';
   }).join('');
 
   const tNet = tH - tO, tSin = Math.max(tO - tH, 0), td = dir(tNet);
+  const tAvgH = tH>0 ? tPe/tH : 0, tAvgC = tPfSac>0 ? tPf/tPfSac : 0;
 
   el.innerHTML =
     '<div class="zone-label">Exposición y riesgo por mes KC</div>' +
     '<div class="table-wrap"><table>' +
     '<thead><tr><th>Mes KC</th><th class="text-right">Con hedge</th><th class="text-right">Sin hedge</th>' +
-      '<th class="text-right">Total abierto</th><th class="text-right">Posición neta</th><th>Dirección</th></tr></thead>' +
+      '<th class="text-right">Pos. neta</th><th class="text-right">Prom. contrato</th><th class="text-right">Prom. hedge</th>' +
+      '<th class="text-right">Mercado</th><th class="text-right">No realizado</th></tr></thead>' +
     '<tbody>' + rows +
       '<tr style="border-top:2px solid var(--navy);font-weight:700">' +
         '<td>TOTAL</td>' +
         '<td class="text-right mono">' + fmt(tH) + '</td>' +
         '<td class="text-right mono">' + fmt(tSin) + '</td>' +
-        '<td class="text-right mono">' + fmt(tO) + '</td>' +
-        '<td class="text-right mono" style="color:' + td.col + '">' + (tNet > 0 ? '+' : '') + fmt(tNet) + '</td>' +
-        '<td style="color:' + td.col + '">' + td.txt + '</td>' +
+        '<td class="text-right mono" style="color:' + td.col + '">' + (tNet>0?'+':'') + fmt(tNet) + ' ' + td.txt + '</td>' +
+        '<td class="text-right mono">' + px(tAvgC) + '</td>' +
+        '<td class="text-right mono">' + px(tAvgH) + '</td>' +
+        '<td class="text-right mono">—</td>' +
+        '<td class="text-right mono" style="color:' + (anyMkt ? (tMtm>=0?'var(--ok)':'var(--crit)') : 'var(--muted)') + '">' + (anyMkt ? fmtUSD(tMtm) : '—') + '</td>' +
       '</tr>' +
     '</tbody></table></div>' +
-    '<div style="font-size:10px;color:var(--muted);margin-top:6px">Posición neta = con hedge − vendido abierto. Negativo = CORTO (expuesto a alza de KC); positivo = LARGO (sobre-cubierto).</div>';
+    '<div style="font-size:10px;color:var(--muted);margin-top:6px">Precios en c/lb. No realizado = MtM de hedges (mercado − entrada) + MtM de lo no cubierto (fijado − mercado). Carga precios en Hedges → "✏ Actualizar precios KC".</div>';
 }
 
 

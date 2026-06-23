@@ -203,8 +203,11 @@ barato. Hoy NO se ve en la app (las tarjetas solo cubren hedges) → justifica A
 `kc_current_prices` (un contrato queda sin valorar hasta entonces).
 
 **Pendientes:**
-- [ ] ¿El reparto "no en bolsa" también proporcional (igual que bolsa)?
-- [ ] ¿`precio_kc_cierre` de la cubeta no-bolsa = mismo precio del fixing, o uno propio?
+- [x] El reparto "no en bolsa" **también es proporcional** (resto mayor), igual que bolsa.
+- [x] `precio_kc_cierre` de la cubeta no-bolsa = **el mismo precio del fixing**.
+
+> Motor implementado en `docs/sql/apply_fixing.sql` (`apply_fixing` con `dry_run`,
+> `void_fixing`, `commercial_closures`, `v_pnl_comercial`).
 
 ---
 

@@ -185,11 +185,24 @@ El P&L total del negocio = **P&L hedges** (`v_pnl`) **+ P&L comercial**
 ## 6. Decisiones
 **Confirmadas:**
 - Signo no realizado contratos sin hedge: **baja = ganancia** `(fijado − actual)`.
+  → **Validado con data real** (Au79: mercado sube → pérdida; Little Waves: mercado
+  baja → ganancia).
 - P&L comercial al cerrar: **tabla separada** (`commercial_closures`), no se mezcla
   con hedges.
+- **No hay categoría PTBF:** en producción los 20 contratos sin hedge tienen
+  `precio_kc_fijado`. Se descarta tratar PTBF aparte (si en el futuro aparece un
+  contrato sin precio fijado, queda fuera de `v_unrealized` por el `where`).
+- Base de `exposicion_sin_hedge` = `max(sacos_abiertos − hedge_open, 0)`:
+  **validada** (los contratos sin hedge dan exposición = sacos abiertos).
+
+**Hallazgo operativo:** el P&L no realizado de lo no-cubierto era, al validar,
+≈ **−$2.120 neto** (+$19,2k / −$21,3k bruto), concentrado en contratos fijados
+barato. Hoy NO se ve en la app (las tarjetas solo cubren hedges) → justifica A.
+
+**Nota de datos:** falta cargar el precio KC del mes **Z-2026** en
+`kc_current_prices` (un contrato queda sin valorar hasta entonces).
 
 **Pendientes:**
-- [ ] Base exacta de `exposicion_sin_hedge` (validar con el query §3.4).
 - [ ] ¿El reparto "no en bolsa" también proporcional (igual que bolsa)?
 - [ ] ¿`precio_kc_cierre` de la cubeta no-bolsa = mismo precio del fixing, o uno propio?
 

@@ -2800,30 +2800,13 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
         </div>
       </div>
 
-      <!-- P&L No Realizado -->
-      <div class="pnl-section" id="pnl-section">
-        <div class="pnl-header">
-          <h3>P&amp;L No Realizado por Vencimiento KC</h3>
-          <div class="pnl-header-right">
-            <span class="pnl-timestamp" id="pnl-timestamp"></span>
-            <button class="pnl-refresh" id="pnl-refresh-btn" onclick="calcPnL()">Calcular P&amp;L</button>
-          </div>
-        </div>
-        <!-- Manual price inputs — one per active KC month -->
-        <div id="pnl-inputs" style="padding:14px 18px;display:flex;flex-wrap:wrap;gap:16px;border-bottom:1px solid var(--sand);background:var(--cream);">
-          <div style="font-size:11px;color:var(--muted);align-self:center;">
-            Ingresa el precio actual del mercado KC (c/lb) por vencimiento:
-          </div>
-        </div>
-        <div class="pnl-total-bar" id="pnl-total-bar" style="display:none">
-          <span class="pnl-total-label">P&amp;L No Realizado Total</span>
-          <span class="pnl-total-value" id="pnl-total-value">—</span>
-        </div>
-        <div class="pnl-table-wrap">
-          <div class="pnl-loading" id="pnl-content">
-            Ingresa los precios KC arriba y haz clic en "Calcular P&amp;L"
-          </div>
-        </div>
+      <!-- P&L No Realizado (manual) retirado del dashboard — stub oculto para compatibilidad JS -->
+      <div style="display:none">
+        <span id="pnl-timestamp"></span>
+        <button id="pnl-refresh-btn"></button>
+        <div id="pnl-inputs"></div>
+        <div id="pnl-total-bar"><span id="pnl-total-value"></span></div>
+        <div id="pnl-content"></div>
       </div>
 
       <!-- (Secciones Margen por Contrato, Exposición por Ventana y Cash Flow Proyectado retiradas) -->
@@ -2831,20 +2814,10 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
       <div id="exposure-content" style="display:none"></div>
       <div id="cashflow-content" style="display:none"></div>
 
-      <!-- Roll cost acumulado -->
-      <div class="cfo-section">
-        <div class="cfo-header">
-          <h3>Costo Acumulado de Rolls por Contrato</h3>
-          <p>Cuánto ha costado mantener la cobertura KC</p>
-        </div>
-        <div class="pnl-table-wrap">
-          <div id="rollcost-content"><div class="pnl-loading">Cargando...</div></div>
-        </div>
-      </div>
-
-      <div class="section-title" style="margin-top:24px;">Resumen por contrato</div>
-      <div class="table-wrap" id="contracts-summary-wrap">
-        <div class="empty"><div class="empty-icon">📋</div>Cargando...</div>
+      <!-- Costo de Rolls y Resumen por contrato retirados del dashboard — stubs ocultos -->
+      <div style="display:none">
+        <div id="rollcost-content"></div>
+        <div id="contracts-summary-wrap"></div>
       </div>
     </div>
 
@@ -13256,88 +13229,63 @@ async function saveKcPrices(months) {
 
 
 // ══════════════════════════════════════════════════════════════════════
-// CHARTS DEL DASHBOARD (barras CSS por mes KC — sin librerías)
+// EXPOSICIÓN Y RIESGO POR MES KC (tabla consolidada)
 // ══════════════════════════════════════════════════════════════════════
-
-function dcBar(label, value, max, color, valueText) {
-  const w = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;
-  return '<div style="display:flex;align-items:center;gap:8px;margin:4px 0">' +
-    '<div style="width:60px;font-size:11px;color:var(--muted)">' + label + '</div>' +
-    '<div style="flex:1;background:#ececec;border-radius:4px;height:15px;overflow:hidden">' +
-      '<div style="width:' + w + '%;background:' + color + ';height:100%;border-radius:4px"></div></div>' +
-    '<div style="width:84px;text-align:right;font-size:11px;font-family:var(--mono)">' + valueText + '</div>' +
-  '</div>';
-}
-
-function dcCard(title, sub, inner) {
-  return '<div style="background:#fff;border:1px solid var(--sand);border-radius:10px;padding:14px 16px">' +
-    '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:2px">' + title + '</div>' +
-    '<div style="font-size:10px;color:var(--muted);margin-bottom:10px">' + sub + '</div>' +
-    inner + '</div>';
-}
 
 function renderDashCharts(contracts, hedges) {
   const el = v('kc-zone-charts');
   if (!el) return;
 
   const openH = (hedges || []).filter(h => h.sacos_abiertos > 0);
-  const hedgeByContract = {};
-  openH.forEach(h => { hedgeByContract[h.contract_id] = (hedgeByContract[h.contract_id] || 0) + (h.sacos_abiertos || 0); });
-
   const M = {};
-  const ensure = k => (M[k] = M[k] || { hSacos:0, hLotes:0, peSum:0, cSacos:0, exp:0 });
-  openH.forEach(h => {
-    const m = ensure(h.kc_month + h.kc_year);
-    m.hSacos += h.sacos_abiertos || 0;
-    m.hLotes += h.contratos_kc_abiertos || 0;
-    m.peSum  += (h.precio_entrada_clb || 0) * (h.sacos_abiertos || 0);
-  });
-  (contracts || []).forEach(c => {
-    if ((c.sacos_abiertos || 0) <= 0) return;
-    const m = ensure(c.kc_month + c.kc_year);
-    m.cSacos += c.sacos_abiertos || 0;
-    m.exp    += Math.max((c.sacos_abiertos || 0) - (hedgeByContract[c.id] || 0), 0);
-  });
+  const ensure = k => (M[k] = M[k] || { hedge:0, open:0 });
+  openH.forEach(h => { ensure(h.kc_month + h.kc_year).hedge += h.sacos_abiertos || 0; });
+  (contracts || []).forEach(c => { if ((c.sacos_abiertos || 0) > 0) ensure(c.kc_month + c.kc_year).open += c.sacos_abiertos || 0; });
 
   const keys = Object.keys(M).sort();
   if (!keys.length) { el.innerHTML = ''; return; }
 
-  const lbl = k => (KC_MONTH_LABELS[k.slice(0,1)] || k.slice(0,1)) + " '" + k.slice(3);
-  const maxOf = f => Math.max(1, ...keys.map(f));
+  const lbl = k => 'KC ' + (KC_MONTH_LABELS[k.slice(0,1)] || k.slice(0,1)) + " '" + k.slice(3);
+  const dir = neto => ({
+    col: neto > 0 ? 'var(--ok)' : neto < 0 ? 'var(--crit)' : 'var(--muted)',
+    txt: neto > 0 ? '🟢 LARGO' : neto < 0 ? '🔴 CORTO' : '⚪ NEUTRO'
+  });
 
-  // Chart 1: sacos abiertos por mes (físico sin comprar)
-  const maxC = maxOf(k => M[k].cSacos);
-  const c1 = keys.map(k => dcBar(lbl(k), M[k].cSacos, maxC, 'var(--navy)', fmt(M[k].cSacos))).join('');
-
-  // Chart 2: lotes KC por mes (posición en bolsa)
-  const maxL = maxOf(k => M[k].hLotes);
-  const c2 = keys.map(k => dcBar(lbl(k), M[k].hLotes, maxL, '#6b8e3d', fmt(M[k].hLotes, 2))).join('');
-
-  // Chart 3: exposición sin hedge por mes
-  const maxE = maxOf(k => M[k].exp);
-  const c3 = keys.map(k => dcBar(lbl(k), M[k].exp, maxE, 'var(--crit)', fmt(M[k].exp))).join('');
-
-  // Chart 4: precio promedio hedge vs mercado actual
-  const avg = k => M[k].hSacos > 0 ? M[k].peSum / M[k].hSacos : 0;
-  const mkt = k => KC_PRICES[k] || 0;
-  const maxP = Math.max(1, ...keys.map(k => Math.max(avg(k), mkt(k))));
-  const c4 = keys.map(k => {
-    const a = avg(k), m = mkt(k);
-    return '<div style="margin-bottom:8px">' +
-      '<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:2px">' + lbl(k) + '</div>' +
-      dcBar('Hedge', a, maxP, 'var(--navy)', a ? fmt(a,1) + ' c/lb' : '—') +
-      dcBar('Mercado', m, maxP, '#c79a3b', m ? fmt(m,1) + ' c/lb' : 's/precio') +
-    '</div>';
+  let tH = 0, tO = 0;
+  const rows = keys.map(k => {
+    const m = M[k];
+    const sinH = Math.max(m.open - m.hedge, 0);
+    const neto = m.hedge - m.open;
+    tH += m.hedge; tO += m.open;
+    const d = dir(neto);
+    return '<tr>' +
+      '<td>' + lbl(k) + '</td>' +
+      '<td class="text-right mono">' + fmt(m.hedge) + '</td>' +
+      '<td class="text-right mono">' + fmt(sinH) + '</td>' +
+      '<td class="text-right mono">' + fmt(m.open) + '</td>' +
+      '<td class="text-right mono" style="color:' + d.col + ';font-weight:700">' + (neto > 0 ? '+' : '') + fmt(neto) + '</td>' +
+      '<td style="color:' + d.col + ';font-weight:700">' + d.txt + '</td>' +
+    '</tr>';
   }).join('');
 
+  const tNet = tH - tO, tSin = Math.max(tO - tH, 0), td = dir(tNet);
+
   el.innerHTML =
-    '<div class="zone-label">Análisis por mes KC</div>' +
-    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px">' +
-      dcCard('Sacos abiertos por mes', 'Físico vendido sin comprar', c1) +
-      dcCard('Lotes KC por mes', 'Posición de cobertura en bolsa', c2) +
-      dcCard('Exposición sin hedge por mes', 'Sacos fijados/vendidos sin cobertura', c3) +
-      dcCard('Precio: hedges vs mercado', 'Entrada prom. de hedges vs KC actual', c4) +
-    '</div>';
+    '<div class="zone-label">Exposición y riesgo por mes KC</div>' +
+    '<div class="table-wrap"><table>' +
+    '<thead><tr><th>Mes KC</th><th class="text-right">Con hedge</th><th class="text-right">Sin hedge</th>' +
+      '<th class="text-right">Total abierto</th><th class="text-right">Posición neta</th><th>Dirección</th></tr></thead>' +
+    '<tbody>' + rows +
+      '<tr style="border-top:2px solid var(--navy);font-weight:700">' +
+        '<td>TOTAL</td>' +
+        '<td class="text-right mono">' + fmt(tH) + '</td>' +
+        '<td class="text-right mono">' + fmt(tSin) + '</td>' +
+        '<td class="text-right mono">' + fmt(tO) + '</td>' +
+        '<td class="text-right mono" style="color:' + td.col + '">' + (tNet > 0 ? '+' : '') + fmt(tNet) + '</td>' +
+        '<td style="color:' + td.col + '">' + td.txt + '</td>' +
+      '</tr>' +
+    '</tbody></table></div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-top:6px">Posición neta = con hedge − vendido abierto. Negativo = CORTO (expuesto a alza de KC); positivo = LARGO (sobre-cubierto).</div>';
 }
 
 

@@ -2610,6 +2610,7 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
           <button class="sidebar-sublink" data-tab="riesgo" onclick="navTo('riesgo')">Riesgo</button>
           <button class="sidebar-sublink" data-tab="roll" onclick="navTo('roll')">Roll</button>
           <button class="sidebar-sublink" data-tab="cierre-masivo" onclick="navTo('cierre-masivo')">Cierre Masivo</button>
+          <button class="sidebar-sublink" data-tab="fixing-auto" onclick="navTo('fixing-auto')">Fixing Auto</button>
           <button class="sidebar-sublink" data-tab="reconciliacion" onclick="navTo('reconciliacion')">Reconciliación</button>
         </div>
 
@@ -2727,6 +2728,7 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
       <button class="nav-btn" data-tab="reconciliacion" onclick="showTab('reconciliacion',this)">Recon</button>
       <button class="nav-btn" data-tab="calculadora" onclick="showTab('calculadora',this)">Calculadora</button>
       <button class="nav-btn" data-tab="cierre-masivo" onclick="showTab('cierre-masivo',this)">Cierre Masivo</button>
+      <button class="nav-btn" data-tab="fixing-auto" onclick="showTab('fixing-auto',this)">Fixing Auto</button>
       <button class="nav-btn" id="chat-nav-btn" data-tab="chat" onclick="showTab('chat',this)">Chat IA</button>
     </div>
 
@@ -3696,6 +3698,63 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
       </div>
     </div>
 
+    <!-- FIXING AUTOMÁTICO (motor apply_fixing) -->
+    <div id="tab-fixing-auto" class="tab-panel" style="display:none">
+      <div class="section-title-row">
+        <div class="section-title">Fixing automático</div>
+        <span style="font-size:11px;color:var(--muted)">Reparte la compra sola: en bolsa (cierra hedges) y no en bolsa (contratos fijados sin hedge)</span>
+      </div>
+
+      <!-- Paso 1: datos -->
+      <div class="cm-step">
+        <div class="cm-step-title"><div class="cm-step-num">1</div>Datos del fixing</div>
+        <div class="form-grid">
+          <div class="fl"><label>Mes KC <span class="req">*</span></label>
+            <select id="fa-kc-month">
+              <option value="H">H — Marzo 2026</option>
+              <option value="K">K — Mayo 2026</option>
+              <option value="N">N — Julio 2026</option>
+              <option value="U" selected>U — Sep 2026</option>
+              <option value="Z">Z — Dic 2026</option>
+            </select></div>
+          <div class="fl"><label>Año KC <span class="req">*</span></label>
+            <input id="fa-kc-year" type="number" value="2026"></div>
+          <div class="fl"><label>Precio cierre KC (c/lb) <span class="req">*</span></label>
+            <input id="fa-precio-cierre" type="number" step="0.01" placeholder="264.00"></div>
+          <div class="fl"><label>Precio físico (USD/lb) <span class="req">*</span></label>
+            <input id="fa-precio-compra" type="number" step="0.0001" placeholder="3.10"></div>
+          <div class="fl"><label>Fecha <span class="req">*</span></label>
+            <input id="fa-fecha" type="date"></div>
+          <div class="fl"><label>Sacos EN bolsa (cierra hedges)</label>
+            <input id="fa-sacos-bolsa" type="number" min="0" value="0" placeholder="200"></div>
+          <div class="fl"><label>Sacos NO en bolsa (contratos sin hedge)</label>
+            <input id="fa-sacos-nobolsa" type="number" min="0" value="0" placeholder="50"></div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button class="btn btn-ghost" onclick="faSimular()">🔍 Simular (no escribe)</button>
+        </div>
+      </div>
+
+      <!-- Paso 2: preview -->
+      <div class="cm-step">
+        <div class="cm-step-title"><div class="cm-step-num">2</div>Reparto propuesto</div>
+        <div id="fa-preview-wrap">
+          <div class="empty" style="padding:24px"><div class="empty-icon">🔍</div>Simula el paso 1 para ver el reparto</div>
+        </div>
+      </div>
+
+      <!-- Paso 3: confirmar -->
+      <div class="cm-step">
+        <div class="cm-step-title"><div class="cm-step-num">3</div>Confirmar y escribir</div>
+        <div id="fa-confirm-note" style="margin-bottom:12px;font-size:11px;color:var(--muted)">Simula primero para habilitar la escritura.</div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-primary" id="fa-confirm-btn" onclick="faConfirmar()" disabled>✅ Escribir fixing</button>
+          <button class="btn btn-ghost" id="fa-void-btn" onclick="faAnular()" disabled>↩ Anular último fixing</button>
+        </div>
+        <div id="fa-batch-note" style="margin-top:10px;font-size:11px"></div>
+      </div>
+    </div>
+
     <!-- CHAT IA -->
     <div id="tab-chat" class="tab-panel" style="display:none">
       <div class="chat-wrap">
@@ -4295,6 +4354,7 @@ function showTab(id, btn) {
   if (id === 'costos') loadCostLog();
   if (id === 'roll') rollBuildPreview();
   if (id === 'hedges') { loadTxLog(); loadKcPrices(); }
+  if (id === 'fixing-auto') { const f=v('fa-fecha'); if(f&&!f.value) f.value=today(); }
   if (id === 'riesgo') { loadLiquidityData(); renderVaR(); renderStressTest(); renderBreakeven(); renderLiquidityAnalysis(); renderPnLRealizado(); }
   // Sync sidebar + bottom-nav + page title (no-op if elements not present)
   if (typeof syncSidebarKc === 'function') syncSidebarKc(id);
@@ -13217,6 +13277,111 @@ async function saveKcPrices(months) {
     renderHedgesList(); // refresh P&L column
   } catch(e) { toast('Error: '+e.message,'err'); }
   if (btn) { btn.disabled=false; btn.textContent='Guardar precios'; }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// FIXING AUTOMÁTICO — motor apply_fixing / void_fixing
+// ══════════════════════════════════════════════════════════════════════
+
+let FA_LAST = null; // { params, rows, batch }
+
+function faInt(id){ return parseInt(v(id)?.value || 0) || 0; }
+function faNum(id){ return parseFloat(v(id)?.value || 0) || 0; }
+
+function faParams(dry) {
+  const mes   = v('fa-kc-month')?.value;
+  const anio  = faInt('fa-kc-year');
+  const pc    = faNum('fa-precio-cierre');
+  const pf    = faNum('fa-precio-compra');
+  const fecha = v('fa-fecha')?.value || today();
+  const sBol  = faInt('fa-sacos-bolsa');
+  const sNob  = faInt('fa-sacos-nobolsa');
+  if (!mes || !anio || !pc || !pf) { toast('Completa mes, año, precio cierre y precio compra','err'); return null; }
+  if (sBol <= 0 && sNob <= 0) { toast('Indica sacos en bolsa y/o no en bolsa','err'); return null; }
+  return { p_kc_month:mes, p_kc_year:anio, p_precio_cierre_clb:pc, p_precio_compra_usd_lb:pf,
+           p_fecha:fecha, p_sacos_bolsa:sBol, p_sacos_nobolsa:sNob, p_dry_run:dry };
+}
+
+function faRenderPreview(rows, written) {
+  const wrap = v('fa-preview-wrap');
+  if (!wrap) return;
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-icon">🔍</div>La simulación no devolvió filas (revisa cantidades o mes).</div>';
+    return;
+  }
+  const sumB  = rows.filter(r=>r.cubeta==='BOLSA').reduce((s,r)=>s+(r.sacos||0),0);
+  const sumNB = rows.filter(r=>r.cubeta==='NO_BOLSA').reduce((s,r)=>s+(r.sacos||0),0);
+  const pnl   = rows.reduce((s,r)=>s+(r.pnl_usd||0),0);
+  const body = rows.map(r=>`<tr>
+    <td><span class="pill">${r.cubeta}</span></td>
+    <td class="mono">${r.ref_id||''}</td>
+    <td>${r.cliente||'—'}</td>
+    <td class="text-right mono">${fmt(r.sacos)}</td>
+    <td class="text-right mono">${fmt(r.precio_ref,2)}</td>
+    <td class="text-right mono" style="color:${(r.pnl_usd||0)>=0?'var(--ok)':'var(--crit)'}">${fmtUSD(r.pnl_usd||0)}</td>
+  </tr>`).join('');
+  wrap.innerHTML = `
+    <div style="font-size:12px;margin-bottom:8px">
+      Bolsa: <strong>${fmt(sumB)}</strong> sacos · No bolsa: <strong>${fmt(sumNB)}</strong> sacos ·
+      P&L estimado: <strong style="color:${pnl>=0?'var(--ok)':'var(--crit)'}">${fmtUSD(pnl)}</strong>
+      ${written ? '<span class="pill" style="margin-left:8px;background:var(--ok-bg);color:var(--ok)">ESCRITO</span>' : '<span class="pill" style="margin-left:8px">SIMULACIÓN</span>'}
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Cubeta</th><th>Ref</th><th>Cliente</th>
+        <th class="text-right">Sacos</th><th class="text-right">Precio ref</th><th class="text-right">P&L est.</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>`;
+}
+
+async function faSimular() {
+  const params = faParams(true);
+  if (!params) return;
+  const wrap = v('fa-preview-wrap');
+  if (wrap) wrap.innerHTML = '<div class="pnl-loading">Simulando…</div>';
+  v('fa-confirm-btn').disabled = true;
+  const { data, error } = await sb.rpc('apply_fixing', params);
+  if (error) { if(wrap) wrap.innerHTML=''; toast('Error: '+error.message,'err'); return; }
+  const rows = data || [];
+  FA_LAST = { params, rows, batch:null };
+  faRenderPreview(rows, false);
+  v('fa-confirm-btn').disabled = rows.length === 0;
+  v('fa-confirm-note').innerHTML = rows.length
+    ? 'Revisa el reparto y presiona <strong>Escribir fixing</strong> para guardarlo (se podrá anular).'
+    : 'La simulación no devolvió filas.';
+}
+
+async function faConfirmar() {
+  const params = faParams(false);
+  if (!params) return;
+  if (!confirm('¿Escribir este fixing en la base? Se podrá anular con el botón "Anular último fixing".')) return;
+  const btn = v('fa-confirm-btn'); btn.disabled=true; btn.textContent='Escribiendo…';
+  const { data, error } = await sb.rpc('apply_fixing', params);
+  btn.textContent='✅ Escribir fixing';
+  if (error) { toast('Error: '+error.message,'err'); btn.disabled=false; return; }
+  const rows  = data || [];
+  const batch = rows.find(r=>r.batch_id)?.batch_id || null;
+  FA_LAST = { params, rows, batch };
+  faRenderPreview(rows, true);
+  v('fa-batch-note').innerHTML = batch
+    ? 'Fixing escrito. Lote: <strong class="mono">'+batch+'</strong>'
+    : 'Fixing escrito.';
+  v('fa-void-btn').disabled = !batch;
+  toast('Fixing escrito','ok');
+  await loadAll();
+}
+
+async function faAnular() {
+  const batch = FA_LAST?.batch;
+  if (!batch) { toast('No hay fixing reciente para anular','err'); return; }
+  if (!confirm('¿Anular el fixing '+batch+'? Se borrarán sus cierres y compras.')) return;
+  const { data, error } = await sb.rpc('void_fixing', { p_batch_id: batch });
+  if (error) { toast('Error: '+error.message,'err'); return; }
+  toast(typeof data === 'string' ? data : 'Fixing anulado','ok');
+  if (FA_LAST) FA_LAST.batch = null;
+  v('fa-void-btn').disabled = true;
+  v('fa-batch-note').innerHTML = '<span style="color:var(--crit)">Anulado: '+batch+'</span>';
+  await loadAll();
 }
 
 

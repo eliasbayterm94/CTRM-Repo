@@ -4236,6 +4236,7 @@ async function loadAll() {
     populateSelects();
     populateFilters();
     populateDashFilters();
+    await loadKcPrices();   // precios KC listos antes de pintar el dashboard (P&L no realizado)
     renderDashboard();
     renderPnLRealizado();
     renderPnLPorMesCierre();
@@ -4385,6 +4386,21 @@ function renderDashboard() {
 
   const kpis = []; // legacy — kept for compat
 
+  // P&L no realizado de contratos fijados SIN hedge (respeta filtros del dashboard).
+  // Convención comercial (corto): gana si el mercado baja → (precio_kc_fijado − KC_actual).
+  const hedgeByContractDash = {};
+  hedgesFiltered.filter(h => h.sacos_abiertos > 0).forEach(h => {
+    hedgeByContractDash[h.contract_id] = (hedgeByContractDash[h.contract_id] || 0) + (h.sacos_abiertos || 0);
+  });
+  let unrealSinCubrir = 0, unrealConPrecio = false;
+  contracts.forEach(c => {
+    if (c.precio_kc_fijado == null) return;
+    const exp = Math.max((c.sacos_abiertos || 0) - (hedgeByContractDash[c.id] || 0), 0);
+    if (exp <= 0) return;
+    const precioAct = KC_PRICES[c.kc_month + c.kc_year];
+    if (precioAct) { unrealSinCubrir += (c.precio_kc_fijado - precioAct) * exp * KG_SACO * LB_PER_KG / 100; unrealConPrecio = true; }
+  });
+
   // ── ZONE 1: Hero — Exposición / Cobertura ──────────────────────────
   const heroEl = v('kc-zone-hero');
   if (heroEl) {
@@ -4410,6 +4426,7 @@ function renderDashboard() {
           <div class="hero-big-alt">${fmt(sacosNoHedge)}</div>
           <div class="hero-unit">exposición sin cubrir</div>
           <div class="hero-side-sub">${fmt(totalSacos)} contratados · ${fmt(abiertos)} abiertos · ${fmt(comprados)} comprados</div>
+          ${unrealConPrecio ? `<div class="hero-side-sub" style="margin-top:6px">P&L no realizado: <strong style="color:${unrealSinCubrir>=0?'var(--ok)':'var(--crit)'};font-family:var(--mono)">${unrealSinCubrir>=0?'+':''}${fmtUSD(unrealSinCubrir)}</strong></div>` : ''}
           ${sacosNoHedge > 0 ? '<button class="hero-side-cta" onclick="filterSinHedge()">VER DETALLE →</button>' : ''}
         </div>
       </div>`;
@@ -13187,6 +13204,7 @@ async function saveKcPrices(months) {
     closeModal();
     renderKcPnlCards();
     renderUncoveredPnlCards();
+    renderDashboard();  // refrescar P&L no realizado en el dashboard
     renderHedgesList(); // refresh P&L column
   } catch(e) { toast('Error: '+e.message,'err'); }
   if (btn) { btn.disabled=false; btn.textContent='Guardar precios'; }

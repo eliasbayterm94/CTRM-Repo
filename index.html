@@ -2609,7 +2609,7 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
         <div class="sidebar-submenu" id="submenu-kc-riesgo">
           <button class="sidebar-sublink" data-tab="riesgo" onclick="navTo('riesgo')">Riesgo</button>
           <button class="sidebar-sublink" data-tab="roll" onclick="navTo('roll')">Roll</button>
-          <button class="sidebar-sublink" data-tab="cierre-masivo" onclick="navTo('cierre-masivo')">Cierre Masivo</button>
+          <button class="sidebar-sublink" data-tab="cierre-masivo" onclick="navTo('cierre-masivo')" style="display:none">Cierre Masivo</button>
           <button class="sidebar-sublink" data-tab="fixing-auto" onclick="navTo('fixing-auto')">Fixing Auto</button>
           <button class="sidebar-sublink" data-tab="reconciliacion" onclick="navTo('reconciliacion')">Reconciliación</button>
         </div>
@@ -2635,7 +2635,7 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
         <div class="sidebar-submenu" id="submenu-kc-crear">
           <button class="sidebar-sublink" data-tab="nuevo-contrato" onclick="navTo('nuevo-contrato')">Contrato</button>
           <button class="sidebar-sublink" data-tab="nuevo-hedge" onclick="navTo('nuevo-hedge')">Hedge</button>
-          <button class="sidebar-sublink" data-tab="nueva-compra" onclick="navTo('nueva-compra')">Compra</button>
+          <button class="sidebar-sublink" data-tab="nueva-compra" onclick="navTo('nueva-compra')" style="display:none">Compra</button>
           <button class="sidebar-sublink" data-tab="nueva-opcion" onclick="navTo('nueva-opcion')">Opción</button>
         </div>
       </div>
@@ -2720,14 +2720,14 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
       <button class="nav-btn" data-tab="roll" onclick="showTab('roll',this)">Roll</button>
       <button class="nav-btn" data-tab="nuevo-contrato" onclick="showTab('nuevo-contrato',this)">+ Contrato</button>
       <button class="nav-btn" data-tab="nuevo-hedge" onclick="showTab('nuevo-hedge',this)">+ Hedge</button>
-      <button class="nav-btn" data-tab="nueva-compra" onclick="showTab('nueva-compra',this)">+ Compra</button>
+      <button class="nav-btn" data-tab="nueva-compra" onclick="showTab('nueva-compra',this)" style="display:none">+ Compra</button>
       <button class="nav-btn" data-tab="opciones" onclick="showTab('opciones',this)">Opciones</button>
       <button class="nav-btn" data-tab="nueva-opcion" onclick="showTab('nueva-opcion',this)">+ Opción</button>
       <button class="nav-btn" data-tab="costos" onclick="showTab('costos',this)">Costos</button>
       <button class="nav-btn" data-tab="riesgo" onclick="showTab('riesgo',this)">Riesgo</button>
       <button class="nav-btn" data-tab="reconciliacion" onclick="showTab('reconciliacion',this)">Recon</button>
       <button class="nav-btn" data-tab="calculadora" onclick="showTab('calculadora',this)">Calculadora</button>
-      <button class="nav-btn" data-tab="cierre-masivo" onclick="showTab('cierre-masivo',this)">Cierre Masivo</button>
+      <button class="nav-btn" data-tab="cierre-masivo" onclick="showTab('cierre-masivo',this)" style="display:none">Cierre Masivo</button>
       <button class="nav-btn" data-tab="fixing-auto" onclick="showTab('fixing-auto',this)">Fixing Auto</button>
       <button class="nav-btn" id="chat-nav-btn" data-tab="chat" onclick="showTab('chat',this)">Chat IA</button>
     </div>
@@ -2767,6 +2767,8 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
       <div id="kc-zone-pnl" class="dash-zone"></div>
       <!-- Zone 3: Alertas -->
       <div id="kc-zone-alerts" class="dash-zone"></div>
+      <!-- Zone 4: Charts por mes KC -->
+      <div id="kc-zone-charts" class="dash-zone"></div>
       <!-- Legacy kpi-grid hidden for compatibility -->
       <div class="kpi-grid" id="kpi-grid" style="display:none"></div>
 
@@ -2824,38 +2826,10 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
         </div>
       </div>
 
-      <!-- Margen por contrato -->
-      <div class="cfo-section">
-        <div class="cfo-header">
-          <h3>Margen por Contrato</h3>
-          <p>(Precio Venta − KC Cobertura) / Precio Venta</p>
-        </div>
-        <div class="pnl-table-wrap">
-          <div id="margin-content"><div class="pnl-loading">Cargando...</div></div>
-        </div>
-      </div>
-
-      <!-- Exposición por ventana de entrega -->
-      <div class="cfo-section">
-        <div class="cfo-header">
-          <h3>Exposición por Ventana de Entrega</h3>
-          <p>Contratos activos con su hedge de cobertura</p>
-        </div>
-        <div class="pnl-table-wrap">
-          <div id="exposure-content"><div class="pnl-loading">Cargando...</div></div>
-        </div>
-      </div>
-
-      <!-- Cash flow proyectado -->
-      <div class="cfo-section">
-        <div class="cfo-header">
-          <h3>Cash Flow Proyectado</h3>
-          <p>Ingresos esperados mes a mes según ventanas de entrega</p>
-        </div>
-        <div class="pnl-table-wrap">
-          <div id="cashflow-content"><div class="pnl-loading">Cargando...</div></div>
-        </div>
-      </div>
+      <!-- (Secciones Margen por Contrato, Exposición por Ventana y Cash Flow Proyectado retiradas) -->
+      <div id="margin-content" style="display:none"></div>
+      <div id="exposure-content" style="display:none"></div>
+      <div id="cashflow-content" style="display:none"></div>
 
       <!-- Roll cost acumulado -->
       <div class="cfo-section">
@@ -4647,6 +4621,7 @@ function renderDashboard() {
   renderExposicion(contracts);
   renderCashFlow(contracts);
   renderRollCost(contracts);
+  renderDashCharts(contracts, hedgesFiltered);
 
   // KC by expiry table (uses filtered hedgesOpen)
   const byExpiry = {};
@@ -13277,6 +13252,92 @@ async function saveKcPrices(months) {
     renderHedgesList(); // refresh P&L column
   } catch(e) { toast('Error: '+e.message,'err'); }
   if (btn) { btn.disabled=false; btn.textContent='Guardar precios'; }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// CHARTS DEL DASHBOARD (barras CSS por mes KC — sin librerías)
+// ══════════════════════════════════════════════════════════════════════
+
+function dcBar(label, value, max, color, valueText) {
+  const w = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0;
+  return '<div style="display:flex;align-items:center;gap:8px;margin:4px 0">' +
+    '<div style="width:60px;font-size:11px;color:var(--muted)">' + label + '</div>' +
+    '<div style="flex:1;background:#ececec;border-radius:4px;height:15px;overflow:hidden">' +
+      '<div style="width:' + w + '%;background:' + color + ';height:100%;border-radius:4px"></div></div>' +
+    '<div style="width:84px;text-align:right;font-size:11px;font-family:var(--mono)">' + valueText + '</div>' +
+  '</div>';
+}
+
+function dcCard(title, sub, inner) {
+  return '<div style="background:#fff;border:1px solid var(--sand);border-radius:10px;padding:14px 16px">' +
+    '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:2px">' + title + '</div>' +
+    '<div style="font-size:10px;color:var(--muted);margin-bottom:10px">' + sub + '</div>' +
+    inner + '</div>';
+}
+
+function renderDashCharts(contracts, hedges) {
+  const el = v('kc-zone-charts');
+  if (!el) return;
+
+  const openH = (hedges || []).filter(h => h.sacos_abiertos > 0);
+  const hedgeByContract = {};
+  openH.forEach(h => { hedgeByContract[h.contract_id] = (hedgeByContract[h.contract_id] || 0) + (h.sacos_abiertos || 0); });
+
+  const M = {};
+  const ensure = k => (M[k] = M[k] || { hSacos:0, hLotes:0, peSum:0, cSacos:0, exp:0 });
+  openH.forEach(h => {
+    const m = ensure(h.kc_month + h.kc_year);
+    m.hSacos += h.sacos_abiertos || 0;
+    m.hLotes += h.contratos_kc_abiertos || 0;
+    m.peSum  += (h.precio_entrada_clb || 0) * (h.sacos_abiertos || 0);
+  });
+  (contracts || []).forEach(c => {
+    if ((c.sacos_abiertos || 0) <= 0) return;
+    const m = ensure(c.kc_month + c.kc_year);
+    m.cSacos += c.sacos_abiertos || 0;
+    m.exp    += Math.max((c.sacos_abiertos || 0) - (hedgeByContract[c.id] || 0), 0);
+  });
+
+  const keys = Object.keys(M).sort();
+  if (!keys.length) { el.innerHTML = ''; return; }
+
+  const lbl = k => (KC_MONTH_LABELS[k.slice(0,1)] || k.slice(0,1)) + " '" + k.slice(3);
+  const maxOf = f => Math.max(1, ...keys.map(f));
+
+  // Chart 1: sacos abiertos por mes (físico sin comprar)
+  const maxC = maxOf(k => M[k].cSacos);
+  const c1 = keys.map(k => dcBar(lbl(k), M[k].cSacos, maxC, 'var(--navy)', fmt(M[k].cSacos))).join('');
+
+  // Chart 2: lotes KC por mes (posición en bolsa)
+  const maxL = maxOf(k => M[k].hLotes);
+  const c2 = keys.map(k => dcBar(lbl(k), M[k].hLotes, maxL, '#6b8e3d', fmt(M[k].hLotes, 2))).join('');
+
+  // Chart 3: exposición sin hedge por mes
+  const maxE = maxOf(k => M[k].exp);
+  const c3 = keys.map(k => dcBar(lbl(k), M[k].exp, maxE, 'var(--crit)', fmt(M[k].exp))).join('');
+
+  // Chart 4: precio promedio hedge vs mercado actual
+  const avg = k => M[k].hSacos > 0 ? M[k].peSum / M[k].hSacos : 0;
+  const mkt = k => KC_PRICES[k] || 0;
+  const maxP = Math.max(1, ...keys.map(k => Math.max(avg(k), mkt(k))));
+  const c4 = keys.map(k => {
+    const a = avg(k), m = mkt(k);
+    return '<div style="margin-bottom:8px">' +
+      '<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:2px">' + lbl(k) + '</div>' +
+      dcBar('Hedge', a, maxP, 'var(--navy)', a ? fmt(a,1) + ' c/lb' : '—') +
+      dcBar('Mercado', m, maxP, '#c79a3b', m ? fmt(m,1) + ' c/lb' : 's/precio') +
+    '</div>';
+  }).join('');
+
+  el.innerHTML =
+    '<div class="zone-label">Análisis por mes KC</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px">' +
+      dcCard('Sacos abiertos por mes', 'Físico vendido sin comprar', c1) +
+      dcCard('Lotes KC por mes', 'Posición de cobertura en bolsa', c2) +
+      dcCard('Exposición sin hedge por mes', 'Sacos fijados/vendidos sin cobertura', c3) +
+      dcCard('Precio: hedges vs mercado', 'Entrada prom. de hedges vs KC actual', c4) +
+    '</div>';
 }
 
 

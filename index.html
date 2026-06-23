@@ -13158,8 +13158,17 @@ function renderUncoveredPnlCards() {
 }
 
 function openKcPricesModal() {
+  // Meses con hedge abierto + meses de contratos fijados SIN cubrir (pueden no tener hedge,
+  // p.ej. diciembre con solo un contrato sin hedge) para poder cargarles precio.
   const openHedges = HEDGES.filter(h => h.sacos_abiertos > 0);
-  const months = [...new Set(openHedges.map(h => h.kc_month + h.kc_year))].sort();
+  const hedgeByContract = {};
+  openHedges.forEach(h => { hedgeByContract[h.contract_id] = (hedgeByContract[h.contract_id] || 0) + (h.sacos_abiertos || 0); });
+  const hedgeMonths = openHedges.map(h => h.kc_month + h.kc_year);
+  const uncoveredMonths = CONTRACTS
+    .filter(c => c.precio_kc_fijado != null
+      && Math.max((c.sacos_abiertos || 0) - (hedgeByContract[c.id] || 0), 0) > 0)
+    .map(c => c.kc_month + c.kc_year);
+  const months = [...new Set([...hedgeMonths, ...uncoveredMonths])].sort();
 
   const body = '<div style="font-size:11px;color:var(--muted);margin-bottom:14px">'+
     'Ingresa el precio actual de mercado por mes KC. Se guardará para futuras sesiones.</div>' +

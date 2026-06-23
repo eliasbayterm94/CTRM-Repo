@@ -2939,6 +2939,17 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
         </div>
       </div>
 
+      <!-- P&L No Realizado — posiciones fijadas sin cubrir (no en bolsa) -->
+      <div id="kc-pnl-uncovered-section" style="margin-bottom:20px">
+        <div class="section-title-row" style="margin-bottom:10px">
+          <div style="font-size:13px;font-weight:700;color:var(--navy)">🟠 P&L No Realizado — Posiciones sin cubrir</div>
+          <span style="font-size:11px;color:var(--muted)">Contratos fijados sin hedge · gana si el mercado baja</span>
+        </div>
+        <div id="kc-pnl-uncovered-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:12px">
+          <div style="font-size:12px;color:var(--muted);padding:8px 0">Calculando…</div>
+        </div>
+      </div>
+
       <div class="table-wrap" id="hedges-table-wrap">
         <div class="empty"><div class="empty-icon">📊</div>Cargando...</div>
       </div>
@@ -4225,6 +4236,7 @@ async function loadAll() {
     populateSelects();
     populateFilters();
     populateDashFilters();
+    await loadKcPrices();   // precios KC listos antes de pintar el dashboard (P&L no realizado)
     renderDashboard();
     renderPnLRealizado();
     renderPnLPorMesCierre();
@@ -4374,6 +4386,21 @@ function renderDashboard() {
 
   const kpis = []; // legacy — kept for compat
 
+  // P&L no realizado de contratos fijados SIN hedge (respeta filtros del dashboard).
+  // Convención comercial (corto): gana si el mercado baja → (precio_kc_fijado − KC_actual).
+  const hedgeByContractDash = {};
+  hedgesFiltered.filter(h => h.sacos_abiertos > 0).forEach(h => {
+    hedgeByContractDash[h.contract_id] = (hedgeByContractDash[h.contract_id] || 0) + (h.sacos_abiertos || 0);
+  });
+  let unrealSinCubrir = 0, unrealConPrecio = false;
+  contracts.forEach(c => {
+    if (c.precio_kc_fijado == null) return;
+    const exp = Math.max((c.sacos_abiertos || 0) - (hedgeByContractDash[c.id] || 0), 0);
+    if (exp <= 0) return;
+    const precioAct = KC_PRICES[c.kc_month + c.kc_year];
+    if (precioAct) { unrealSinCubrir += (c.precio_kc_fijado - precioAct) * exp * KG_SACO * LB_PER_KG / 100; unrealConPrecio = true; }
+  });
+
   // ── ZONE 1: Hero — Exposición / Cobertura ──────────────────────────
   const heroEl = v('kc-zone-hero');
   if (heroEl) {
@@ -4399,6 +4426,7 @@ function renderDashboard() {
           <div class="hero-big-alt">${fmt(sacosNoHedge)}</div>
           <div class="hero-unit">exposición sin cubrir</div>
           <div class="hero-side-sub">${fmt(totalSacos)} contratados · ${fmt(abiertos)} abiertos · ${fmt(comprados)} comprados</div>
+          ${unrealConPrecio ? `<div class="hero-side-sub" style="margin-top:6px">P&L no realizado: <strong style="color:${unrealSinCubrir>=0?'var(--ok)':'var(--crit)'};font-family:var(--mono)">${unrealSinCubrir>=0?'+':''}${fmtUSD(unrealSinCubrir)}</strong></div>` : ''}
           ${sacosNoHedge > 0 ? '<button class="hero-side-cta" onclick="filterSinHedge()">VER DETALLE →</button>' : ''}
         </div>
       </div>`;
@@ -12992,6 +13020,7 @@ async function loadKcPrices() {
     KC_PRICES = {};
     (data||[]).forEach(r => { KC_PRICES[r.kc_key] = r.precio; });
     renderKcPnlCards();
+    renderUncoveredPnlCards();
   } catch(e) { console.warn('loadKcPrices:', e.message); }
 }
 
@@ -13057,6 +13086,77 @@ function renderKcPnlCards() {
   el.innerHTML = cards.join('');
 }
 
+// P&L no realizado de contratos FIJADOS pero SIN hedge (no en bolsa).
+// Convención comercial (corto): gana si el mercado baja → (precio_kc_fijado − KC_actual).
+// 100% en memoria: usa CONTRACTS, HEDGES y KC_PRICES ya cargados. No consulta la BD.
+function renderUncoveredPnlCards() {
+  const el = v('kc-pnl-uncovered-cards');
+  if (!el) return;
+
+  // sacos con hedge abierto por contrato
+  const hedgeByContract = {};
+  HEDGES.filter(h => h.sacos_abiertos > 0).forEach(h => {
+    hedgeByContract[h.contract_id] = (hedgeByContract[h.contract_id] || 0) + (h.sacos_abiertos || 0);
+  });
+
+  // contratos fijados con exposición sin cubrir
+  const rows = CONTRACTS
+    .filter(c => c.precio_kc_fijado != null && (c.sacos_abiertos || 0) > 0)
+    .map(c => ({ c, exp: Math.max((c.sacos_abiertos || 0) - (hedgeByContract[c.id] || 0), 0) }))
+    .filter(r => r.exp > 0);
+
+  if (rows.length === 0) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px 0">Sin posiciones fijadas pendientes de cobertura.</div>';
+    return;
+  }
+
+  // agrupar por mes KC
+  const byMonth = {};
+  rows.forEach(({ c, exp }) => {
+    const key = c.kc_month + c.kc_year;
+    if (!byMonth[key]) byMonth[key] = { sacos: 0, pnl: 0, n: 0 };
+    byMonth[key].sacos += exp;
+    byMonth[key].n += 1;
+    const precioAct = KC_PRICES[key];
+    if (precioAct) byMonth[key].pnl += (c.precio_kc_fijado - precioAct) * exp * KG_SACO * LB_PER_KG / 100;
+  });
+
+  let total = 0, algunPrecio = false;
+  const cards = Object.keys(byMonth).sort().map(key => {
+    const m = byMonth[key];
+    const month = key.slice(0, 1), year = key.slice(1);
+    const precioAct = KC_PRICES[key];
+    if (precioAct) { total += m.pnl; algunPrecio = true; }
+    const col = !precioAct ? 'var(--muted)' : m.pnl >= 0 ? 'var(--ok)' : 'var(--crit)';
+    const bg  = !precioAct ? '#f5f5f5'      : m.pnl >= 0 ? 'var(--ok-bg)' : 'var(--crit-bg)';
+    return '<div style="background:#3a3a38;border-radius:8px;padding:12px 14px;color:#fff">' +
+      '<div style="font-size:9px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">KC ' +
+        (KC_MONTH_LABELS[month] || month) + ' ' + year + ' · sin cubrir</div>' +
+      '<div style="font-size:11px;color:rgba(255,255,255,.6);margin-bottom:8px">' +
+        m.n + ' contratos · ' + fmt(m.sacos) + ' sac exp.</div>' +
+      (precioAct
+        ? '<div style="font-size:11px;margin-bottom:4px">Precio act: <strong style="font-family:var(--mono)">' +
+            fmt(precioAct, 2) + ' c/lb</strong></div>' +
+          '<div style="background:' + bg + ';border-radius:5px;padding:5px 8px;font-weight:700;font-family:var(--mono);color:' + col + '">' +
+            (m.pnl >= 0 ? '+' : '') + fmtUSD(m.pnl) + '</div>'
+        : '<div style="font-size:11px;color:rgba(255,255,255,.35);font-style:italic">Falta precio KC</div>') +
+      '</div>';
+  });
+
+  if (algunPrecio) {
+    const totalCol = total >= 0 ? 'var(--ok)' : 'var(--crit)';
+    cards.push(
+      '<div style="background:' + totalCol + ';border-radius:8px;padding:12px 14px;color:#fff">' +
+      '<div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;color:rgba(255,255,255,.7)">Total sin cubrir</div>' +
+      '<div style="font-size:22px;font-weight:700;font-family:var(--mono)">' + (total >= 0 ? '+' : '') + fmtUSD(total) + '</div>' +
+      '<div style="font-size:9px;color:rgba(255,255,255,.7);margin-top:4px">USD no realizado</div>' +
+      '</div>'
+    );
+  }
+
+  el.innerHTML = cards.join('');
+}
+
 function openKcPricesModal() {
   const openHedges = HEDGES.filter(h => h.sacos_abiertos > 0);
   const months = [...new Set(openHedges.map(h => h.kc_month + h.kc_year))].sort();
@@ -13103,6 +13203,8 @@ async function saveKcPrices(months) {
     toast('Precios KC guardados','ok');
     closeModal();
     renderKcPnlCards();
+    renderUncoveredPnlCards();
+    renderDashboard();  // refrescar P&L no realizado en el dashboard
     renderHedgesList(); // refresh P&L column
   } catch(e) { toast('Error: '+e.message,'err'); }
   if (btn) { btn.disabled=false; btn.textContent='Guardar precios'; }

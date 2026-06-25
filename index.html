@@ -4408,6 +4408,12 @@ function renderDashboard() {
     if (precioAct) { unrealSinCubrir += (c.precio_kc_fijado - precioAct) * exp * KG_SACO * LB_PER_KG / 100; unrealConPrecio = true; }
   });
 
+  // Sacos contratados vigentes (contratos activos, no cerrados) y coberturas en %
+  const sacosVigentes  = contracts.filter(c => c.estado_cobertura !== 'CLOSED').reduce((s,c) => s + (c.sacos||0), 0);
+  const pctCobBolsa    = sacosVigentes > 0 ? (sacosHedgeados/sacosVigentes*100).toFixed(1) : '0.0';
+  const pctAbiertosVig = sacosVigentes > 0 ? (abiertos/sacosVigentes*100).toFixed(1) : '0.0';
+  const netDir = netSign === 'SHORT' ? 'CORTO' : netSign === 'LONG' ? 'LARGO' : 'NEUTRO';
+
   // ── ZONE 1: Hero — Exposición / Cobertura ──────────────────────────
   const heroEl = v('kc-zone-hero');
   if (heroEl) {
@@ -4415,24 +4421,24 @@ function renderDashboard() {
       <div class="zone-label">Exposición y cobertura</div>
       <div class="hero-row">
         <div class="hero-card featured">
-          <div class="hero-label">Hedge global · sobre exposición abierta</div>
+          <div class="hero-label">Cobertura en bolsa · sobre contratado vigente</div>
           <div class="hero-main">
-            <div class="hero-big">${pctHedge}%</div>
-            <div class="hero-unit">de sacos sin comprar cubiertos con futuros</div>
+            <div class="hero-big">${pctCobBolsa}%</div>
+            <div class="hero-unit">de sacos contratados vigentes cubiertos con futuros</div>
           </div>
-          <div class="bar-track"><div class="bar-fill" style="width:${Math.min(pctHedge,100)}%"></div></div>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.min(pctCobBolsa,100)}%"></div></div>
           <div class="hero-pills">
-            <span class="pill">${fmt(sacosHedgeados)} hedgeados</span>
-            <span class="pill">${fmt(abiertos)} abiertos</span>
-            <span class="pill">${fmt(comprados)} comprados (${pctCob}%)</span>
+            <span class="pill">${fmt(abiertos)} contratados sin comprar (${pctAbiertosVig}%)</span>
+            <span class="pill">${fmt(sacosHedgeados)} con hedge (${pctCobBolsa}%)</span>
             <span class="pill">${fmt(totalContratosKC,2)} lotes KC</span>
           </div>
         </div>
         <div class="hero-card alert-side ${sacosNoHedge>0?'is-crit':'is-ok'}">
-          <div class="hero-label">Sacos sin hedge</div>
+          <div class="hero-label">Exposición al mercado</div>
           <div class="hero-big-alt">${fmt(sacosNoHedge)}</div>
-          <div class="hero-unit">exposición sin cubrir</div>
-          <div class="hero-side-sub">${fmt(totalSacos)} contratados · ${fmt(abiertos)} abiertos · ${fmt(comprados)} comprados</div>
+          <div class="hero-unit">sacos abiertos en riesgo</div>
+          <div class="hero-side-sub">Posición neta ${netSacos>0?'+':''}${fmt(netSacos)} sacos · <strong>${netDir}</strong></div>
+          <div class="hero-side-sub">Sensibilidad: <strong style="font-family:var(--mono)">${fmtUSD(dv01)}</strong> por 1¢ KC</div>
           ${unrealConPrecio ? `<div class="hero-side-sub" style="margin-top:6px">P&L no realizado: <strong style="color:${unrealSinCubrir>=0?'var(--ok)':'var(--crit)'};font-family:var(--mono)">${unrealSinCubrir>=0?'+':''}${fmtUSD(unrealSinCubrir)}</strong></div>` : ''}
           ${sacosNoHedge > 0 ? '<button class="hero-side-cta" onclick="filterSinHedge()">VER DETALLE →</button>' : ''}
         </div>

@@ -13421,8 +13421,21 @@ async function faConfirmar() {
     ? 'Fixing escrito. Lote: <strong class="mono">'+batch+'</strong>'
     : 'Fixing escrito.';
   v('fa-void-btn').disabled = !batch;
+  // Registrar un resumen en el log de transacciones (se borra al anular)
+  if (batch) {
+    const totS = rows.reduce((s,r)=>s+(r.sacos||0),0);
+    const totP = rows.reduce((s,r)=>s+(r.pnl_usd||0),0);
+    try {
+      await sb.from('kc_transaction_log').insert({
+        id: 'TXF-'+batch, fecha: params.p_fecha, tipo: 'CIERRE', hedge_id: null,
+        contratos_kc: totS * KG_SACO / KG_KC, precio_clb: params.p_precio_cierre_clb,
+        pnl_usd: totP, notas: 'Fixing auto · '+totS+' sacos · '+batch
+      });
+    } catch(e) { console.warn('tx log fixing:', e.message); }
+  }
   toast('Fixing escrito','ok');
   await loadAll();
+  loadTxLog();
 }
 
 async function faAnular() {
@@ -13439,14 +13452,21 @@ async function faAnular() {
 }
 
 // ── Historial de fixings / cierres ──────────────────────────────────────
-function faLogToggle(id) { const e = v(id); if (e) e.style.display = e.style.display === 'none' ? 'table-row' : 'none'; }
+function faLogToggle(idx) {
+  document.querySelectorAll('.fl-det-' + idx).forEach(tr => {
+    tr.style.display = tr.style.display === 'none' ? 'table-row' : 'none';
+  });
+  const car = v('fl-car-' + idx); if (car) car.textContent = car.textContent === '▾' ? '▴' : '▾';
+}
 
 async function faVoidBatch(batch) {
   if (!confirm('¿Anular el fixing ' + batch + '? Se borrarán sus cierres y compras (reversible).')) return;
   const { data, error } = await sb.rpc('void_fixing', { p_batch_id: batch });
   if (error) { toast('Error: ' + error.message, 'err'); return; }
+  try { await sb.from('kc_transaction_log').delete().eq('id', 'TXF-' + batch); } catch (e) { /* noop */ }
   toast(typeof data === 'string' ? data : 'Fixing anulado', 'ok');
   await loadAll();
+  loadTxLog();
 }
 
 function renderFixingLog() {
@@ -13489,6 +13509,7 @@ function renderFixingLog() {
   });
   const keys = Object.keys(groups).sort((a, b) => (groups[b][0].fecha || '').localeCompare(groups[a][0].fecha || ''));
   const mesLbl = m => m ? 'KC ' + (KC_MONTH_LABELS[m.slice(0,1)] || m.slice(0,1)) + " '" + m.slice(3) : '—';
+  const pnlCol = p => p >= 0 ? 'var(--ok)' : 'var(--crit)';
 
   const rows = keys.slice(0, 100).map((key, idx) => {
     const g = groups[key];
@@ -13496,32 +13517,32 @@ function renderFixingLog() {
     const pnl   = g.reduce((s, x) => s + x.pnl, 0);
     const wAvg  = sacos > 0 ? g.reduce((s, x) => s + x.refp * x.sacos, 0) / sacos : 0;
     const isBatch = !key.startsWith('MANUAL|');
-    const detId = 'falog-' + idx;
-    const detail = g.map(x =>
-      '<tr style="background:var(--cream)">' +
-        '<td style="padding-left:20px"><span class="pill">' + x.cubeta + '</span></td>' +
-        '<td class="mono">' + x.ref + '</td><td>' + x.cliente + '</td>' +
-        '<td class="text-right mono">' + fmt(x.sacos) + '</td>' +
-        '<td class="text-right mono">' + fmt(x.refp, 1) + '</td>' +
-        '<td class="text-right mono">' + fmt(x.cierre, 1) + '</td>' +
-        '<td class="text-right mono" style="color:' + (x.pnl >= 0 ? 'var(--ok)' : 'var(--crit)') + '">' + fmtUSD(x.pnl) + '</td>' +
-        '<td></td>' +
-      '</tr>').join('');
-    return '<tr style="cursor:pointer" onclick="faLogToggle(\'' + detId + '\')">' +
+
+    // Fila resumen (una línea por fixing)
+    const summary = '<tr style="cursor:pointer" onclick="faLogToggle(' + idx + ')">' +
         '<td>' + (g[0].fecha || '—') + (isBatch ? '' : ' <span style="color:var(--muted)">(manual)</span>') + '</td>' +
         '<td>' + mesLbl(g[0].mes) + '</td>' +
         '<td class="text-right mono">' + fmt(sacos) + '</td>' +
         '<td class="text-right mono">' + fmt(wAvg, 1) + '</td>' +
         '<td class="text-right mono">' + fmt(g[0].cierre, 1) + '</td>' +
-        '<td class="text-right mono" style="color:' + (pnl >= 0 ? 'var(--ok)' : 'var(--crit)') + ';font-weight:700">' + fmtUSD(pnl) + '</td>' +
+        '<td class="text-right mono" style="color:' + pnlCol(pnl) + ';font-weight:700">' + fmtUSD(pnl) + '</td>' +
         '<td>' + (isBatch ? '<button class="btn btn-ghost" style="padding:2px 8px;font-size:10px" onclick="event.stopPropagation();faVoidBatch(\'' + key + '\')">Anular</button>' : '') + '</td>' +
-        '<td style="text-align:center;color:var(--muted)">▾</td>' +
-      '</tr>' +
-      '<tr id="' + detId + '" style="display:none"><td colspan="8" style="padding:0">' +
-        '<table style="width:100%"><thead><tr><th>Cubeta</th><th>Ref</th><th>Cliente</th>' +
-          '<th class="text-right">Sacos</th><th class="text-right">Entrada/Fijado</th><th class="text-right">Cierre</th><th class="text-right">P&L</th><th></th></tr></thead>' +
-        '<tbody>' + detail + '</tbody></table>' +
-      '</td></tr>';
+        '<td style="text-align:center;color:var(--muted)"><span id="fl-car-' + idx + '">▾</span></td>' +
+      '</tr>';
+
+    // Filas de detalle (posiciones cerradas), ocultas, alineadas a las mismas columnas
+    const detail = g.map(x =>
+      '<tr class="fl-det-' + idx + '" style="display:none;background:var(--cream)">' +
+        '<td style="padding-left:22px">↳ <span class="pill">' + x.cubeta + '</span> <span class="mono">' + x.ref + '</span></td>' +
+        '<td>' + x.cliente + '</td>' +
+        '<td class="text-right mono">' + fmt(x.sacos) + '</td>' +
+        '<td class="text-right mono">' + fmt(x.refp, 1) + '</td>' +
+        '<td class="text-right mono">' + fmt(x.cierre, 1) + '</td>' +
+        '<td class="text-right mono" style="color:' + pnlCol(x.pnl) + '">' + fmtUSD(x.pnl) + '</td>' +
+        '<td></td><td></td>' +
+      '</tr>').join('');
+
+    return summary + detail;
   }).join('');
 
   el.innerHTML = '<div class="table-wrap"><table>' +

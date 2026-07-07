@@ -8831,7 +8831,7 @@ function msUpdateGreeting() {
 
   const g  = v('ms-greet'); if (g) g.textContent = greet;
   const d  = v('ms-day');   if (d) d.textContent = '— ' + dayCap;
-  const dt = v('ms-datetime'); if (dt) dt.textContent = `${dateStr} · ${timeStr}`;
+  const dt = v('ms-datetime'); if (dt) dt.textContent = `${dateStr} · ${timeStr} · v${(APP_VERSION||'').slice(0,7)}`;
 }
 
 // Lightweight independent fetch for the module selector

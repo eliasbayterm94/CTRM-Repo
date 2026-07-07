@@ -14340,28 +14340,53 @@ document.addEventListener('DOMContentLoaded', () => {
     _lastW = w;
   });
 });
-// ── Service Worker Registration ───────────────────────────────────────
+// ── Versión de la app + auto-actualización ────────────────────────────
+// APP_VERSION debe coincidir con version.json (y CACHE_NAME en sw.js).
+// Súbelos en cada deploy para forzar la actualización automática.
+const APP_VERSION = '2026-07-07-1';
+
+async function checkAppVersion() {
+  try {
+    const r = await fetch('/version.json?_=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    const v = data && data.version;
+    if (!v || v === APP_VERSION) return;            // ya estamos en la última
+    if (sessionStorage.getItem('fc_vreload') === v) return;  // guard: ya recargamos para esta versión
+    sessionStorage.setItem('fc_vreload', v);
+    location.reload();                               // trae el index.html nuevo (una sola vez)
+  } catch (e) { /* sin red / offline: ignorar */ }
+}
+
+// ── Service Worker Registration + auto-update ─────────────────────────
+let _swReg = null;
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
       .then(reg => {
+        _swReg = reg;
         console.log('[Forest CTRM] SW registered:', reg.scope);
-        // Check for updates
+        reg.update();                                // buscar nuevo SW en cada launch
         reg.addEventListener('updatefound', () => {
-          const newWorker = reg.installing;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              // New version available — show toast
-              if (typeof toast === 'function') {
-                toast('Nueva versión disponible — recarga para actualizar', 'ok');
-              }
-            }
+          const nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener('statechange', () => {
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) checkAppVersion();
           });
         });
       })
       .catch(err => console.warn('[Forest CTRM] SW registration failed:', err));
   });
 }
+
+// Chequear versión al abrir la app y cada vez que vuelve a primer plano
+checkAppVersion();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    checkAppVersion();
+    if (_swReg) _swReg.update();
+  }
+});
 
 // ── PWA Install prompt (Android Chrome) ───────────────────────────────
 let deferredPrompt;

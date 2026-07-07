@@ -22,6 +22,24 @@
     Content-Type = "application/javascript"
     Cache-Control = "no-cache"
 
+# HTML siempre revalidado → cada launch desde la home screen trae el último deploy
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+# version.json nunca cacheado → el chequeo de versión ve el deploy nuevo al instante
+[[headers]]
+  for = "/version.json"
+  [headers.values]
+    Content-Type = "application/json"
+    Cache-Control = "no-cache"
+
 [[redirects]]
   from = "/manifest.json"
   to = "/manifest.json"
@@ -30,6 +48,11 @@
 [[redirects]]
   from = "/sw.js"
   to = "/sw.js"
+  status = 200
+
+[[redirects]]
+  from = "/version.json"
+  to = "/version.json"
   status = 200
 
 [[redirects]]

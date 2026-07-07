@@ -1,0 +1,4 @@
+{
+  "version": "2026-07-07-1",
+  "_nota": "Sube este valor (y APP_VERSION en index.html, y CACHE_NAME en sw.js) en cada deploy para forzar la auto-actualización de la PWA."
+}

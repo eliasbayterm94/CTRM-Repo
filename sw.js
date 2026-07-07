@@ -1,5 +1,7 @@
-// ── Forest Coffee CTRM — Service Worker v3 ───────────────────────────
-const CACHE_NAME = 'forest-ctrm-v3';  // bumped to v3 to force cache clear
+// ── Forest Coffee CTRM — Service Worker v4 ───────────────────────────
+// CACHE_NAME: súbelo en cada deploy (igual que version.json / APP_VERSION)
+// para que 'activate' borre las cachés viejas.
+const CACHE_NAME = 'forest-ctrm-v4';
 
 const STATIC_ASSETS = [
   '/manifest.json',

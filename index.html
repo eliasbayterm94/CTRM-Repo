@@ -14341,9 +14341,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 // ── Versión de la app + auto-actualización ────────────────────────────
-// APP_VERSION debe coincidir con version.json (y CACHE_NAME en sw.js).
-// Súbelos en cada deploy para forzar la actualización automática.
-const APP_VERSION = '2026-07-07-1';
+// __APP_VERSION__ lo reemplaza Netlify en cada deploy con el SHA del commit
+// (ver command en netlify.toml). No editar a mano.
+const APP_VERSION = '__APP_VERSION__';
 
 async function checkAppVersion() {
   try {

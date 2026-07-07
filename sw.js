@@ -1,7 +1,7 @@
-// ── Forest Coffee CTRM — Service Worker v4 ───────────────────────────
-// CACHE_NAME: súbelo en cada deploy (igual que version.json / APP_VERSION)
-// para que 'activate' borre las cachés viejas.
-const CACHE_NAME = 'forest-ctrm-v4';
+// ── Forest Coffee CTRM — Service Worker ──────────────────────────────
+// __APP_VERSION__ lo reemplaza Netlify en cada deploy (SHA del commit),
+// así 'activate' borra las cachés viejas automáticamente. No editar a mano.
+const CACHE_NAME = 'forest-ctrm-__APP_VERSION__';
 
 const STATIC_ASSETS = [
   '/manifest.json',

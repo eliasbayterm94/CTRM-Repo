@@ -1,5 +1,7 @@
 [build]
   publish = "."
+  # Estampa la versión automáticamente en cada deploy (SHA del commit) → auto-actualización PWA sin tocar nada a mano.
+  command = "VER=\"${COMMIT_REF:-local-$(date +%s)}\"; printf '{\"version\":\"%s\"}' \"$VER\" > version.json; sed -i \"s|__APP_VERSION__|$VER|g\" index.html sw.js; echo \"Stamped version: $VER\""
 
 [functions]
   node_bundler = "esbuild"

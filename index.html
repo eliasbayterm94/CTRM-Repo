@@ -13312,8 +13312,36 @@ function renderDashCharts(contracts, hedges) {
   const tNet = tH - tO, tSin = Math.max(tO - tH, 0), td = dir(tNet);
   const tAvgH = tH>0 ? tPe/tH : 0, tAvgC = tPfSac>0 ? tPf/tPfSac : 0;
 
+  // Libro sin cubrir: contratos SIN ningún hedge (promedios ponderados por sacos abiertos)
+  let uhSacos=0, uhN=0, uhKcSum=0, uhKcSac=0, uhVtaSum=0, uhVtaSac=0;
+  (contracts || []).forEach(c => {
+    const s = c.sacos_abiertos || 0;
+    if (s <= 0 || (hedgeByContract[c.id] || 0) > 0) return;   // solo contratos SIN hedge
+    uhSacos += s; uhN += 1;
+    if (c.precio_kc_fijado != null) { uhKcSum += c.precio_kc_fijado * s; uhKcSac += s; }
+    if (c.precio_venta_clb != null) { uhVtaSum += c.precio_venta_clb * s; uhVtaSac += s; }
+  });
+  const uhKc  = uhKcSac  > 0 ? uhKcSum  / uhKcSac  : 0;
+  const uhVta = uhVtaSac > 0 ? uhVtaSum / uhVtaSac : 0;
+  const uhDif = (uhKc && uhVta) ? uhVta - uhKc : 0;
+  const uhMetric = (big, sub) =>
+    '<div style="min-width:120px"><div style="font-size:19px;font-weight:700;font-family:var(--mono);color:var(--navy)">' + big + '</div>' +
+    '<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">' + sub + '</div></div>';
+  const cardUH = uhN ?
+    '<div style="background:#fff;border:1px solid var(--sand);border-radius:10px;padding:14px 16px;margin-bottom:12px">' +
+      '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:2px">Libro sin cubrir · contratos sin hedge</div>' +
+      '<div style="font-size:10px;color:var(--muted);margin-bottom:12px">Promedios ponderados por sacos abiertos</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:22px">' +
+        uhMetric(fmt(uhSacos), fmt(uhN,0) + ' contratos · sacos') +
+        uhMetric(uhKc  ? fmt(uhKc,1)  + ' <span style="font-size:11px">c/lb</span>' : '—', 'precio KC prom.') +
+        uhMetric(uhVta ? fmt(uhVta,1) + ' <span style="font-size:11px">c/lb</span>' : '—', 'precio venta prom.') +
+        uhMetric(uhDif ? fmt(uhDif,1) + ' <span style="font-size:11px">c/lb</span>' : '—', 'diferencial prom.') +
+      '</div>' +
+    '</div>' : '';
+
   el.innerHTML =
     '<div class="zone-label">Exposición y riesgo por mes KC</div>' +
+    cardUH +
     '<div class="table-wrap"><table>' +
     '<thead><tr><th>Mes KC</th><th class="text-right">Con hedge</th><th class="text-right">Sin hedge</th>' +
       '<th class="text-right">Pos. neta</th><th class="text-right">Prom. contrato</th><th class="text-right">Prom. hedge</th>' +

@@ -2458,6 +2458,9 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
     <div class="ms-greet" id="ms-greet">Hola,</div>
     <h1 class="ms-greet-h">Elias <span class="light" id="ms-day">—</span></h1>
 
+    <!-- Traer última versión (fuerza la última build) -->
+    <button onclick="forceUpdate(this)" style="margin-top:12px;padding:9px 16px;border:1.5px solid var(--sand);background:#fff;border-radius:999px;font-size:12px;font-weight:600;color:var(--navy);cursor:pointer;display:inline-flex;align-items:center;gap:7px">↻ Traer última versión</button>
+
     <!-- Alerts: 2 specific (always shown) -->
     <div class="ms-alerts">
       <div class="ms-eyebrow">
@@ -14356,6 +14359,23 @@ async function checkAppVersion() {
     sessionStorage.setItem('fc_vreload', v);
     location.reload();                               // trae el index.html nuevo (una sola vez)
   } catch (e) { /* sin red / offline: ignorar */ }
+}
+
+// Forzar la última versión: actualizar SW, limpiar cachés y recargar
+async function forceUpdate(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Actualizando…'; }
+  try {
+    sessionStorage.removeItem('fc_vreload');
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.update()));
+    }
+    if (window.caches && caches.keys) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch (e) { /* ignorar */ }
+  location.reload();
 }
 
 // ── Service Worker Registration + auto-update ─────────────────────────

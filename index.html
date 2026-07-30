@@ -13611,22 +13611,20 @@ function renderPnLRealizado() {
 
   const fMes = v('pnl-filter-mes')?.value || '';
 
-  // ── Collect hedge closure P&L from hedge_closures via PURCHASES ──────
-  const hedgePnL = PURCHASES.map(p => {
-    const h  = HEDGES.find(x=>x.id===p.hedge_id);
-    const ct = CONTRACTS.find(x=>x.id===p.contract_id);
-    const lbs = (p.sacos||0) * KG_SACO * LB_PER_KG;
-    const pnl = h ? (p.precio_kc_cierre_clb - h.precio_entrada_clb) * lbs / 100 : 0;
+  // ── Hedge realized P&L desde hedge_closures (fuente de verdad: guarda el
+  //    precio de entrada AL MOMENTO DEL CIERRE; "vía compras" se distorsiona con los rolls) ──
+  const hedgePnL = CLOSURES.map(c => {
+    const ct = CONTRACTS.find(x=>x.id===c.contract_id);
     return {
-      fecha: p.fecha_compra||'',
+      fecha: c.fecha_cierre || c.created_at || '',
       tipo: 'Hedge',
-      ref: p.id,
-      hedge_id: p.hedge_id,
-      contract_id: p.contract_id,
+      ref: c.id,
+      hedge_id: c.hedge_id,
+      contract_id: c.contract_id,
       cliente: ct?.cliente||'—',
       region: ct?.region||'—',
-      sacos: p.sacos||0,
-      pnl,
+      sacos: c.sacos||0,
+      pnl: c.pnl_usd||0,
     };
   }).filter(r => !fMes || r.fecha.slice(0,7) === fMes);
 

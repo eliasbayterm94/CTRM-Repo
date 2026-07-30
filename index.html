@@ -2794,7 +2794,7 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
       <!-- P&L Realizado por mes -->
       <div class="pnl-realized-section">
         <div class="pnl-realized-header">
-          <h3>P&amp;L Realizado por Mes de Cierre</h3>
+          <h3>P&amp;L Realizado por Mes · Neto (Futuros + Opciones + Rolls)</h3>
         </div>
         <div class="pnl-table-wrap">
           <div id="pnl-realized-content">
@@ -5387,52 +5387,54 @@ function renderPnLPorMesCierre() {
   const el = v('pnl-realized-content');
   if (!el) return;
 
-  if (CLOSURES.length === 0) {
-    el.innerHTML = '<div class="pnl-loading">Sin cierres de hedge registrados aún.</div>';
-    return;
-  }
+  const conv = KG_SACO * LB_PER_KG / 100;
+  const M = {}; // 'YYYY-MM' → { fut, opc, roll }
+  const ens = m => (M[m] = M[m] || { fut:0, opc:0, roll:0 });
 
-  // Group by month of fecha_cierre
-  const byMonth = {};
+  // Futuros: hedge_closures (fuente de verdad)
   CLOSURES.forEach(c => {
-    const fecha = c.fecha_cierre || c.created_at || '';
-    const mes = fecha.slice(0,7); // YYYY-MM
-    if (!mes) return;
-    if (!byMonth[mes]) byMonth[mes] = { mes, pnl:0, count:0, sacos:0 };
-    byMonth[mes].pnl   += (c.pnl_usd || 0);
-    byMonth[mes].count += 1;
-    byMonth[mes].sacos += (c.sacos || 0);
+    const m = (c.fecha_cierre || c.created_at || '').slice(0,7);
+    if (m) ens(m).fut += (c.pnl_usd || 0);
+  });
+  // Opciones cerradas
+  OPTIONS.filter(o => o.estado === 'CLOSED' && o.pnl_usd != null).forEach(o => {
+    const m = (o.fecha_cierre || o.fecha_vencimiento || '').slice(0,7);
+    if (m) ens(m).opc += (o.pnl_usd || 0);
+  });
+  // Rolls: (cierre viejo − apertura nuevo) × sacos
+  ROLLS.forEach(r => {
+    const m = (r.fecha || r.created_at || '').slice(0,7);
+    if (m) ens(m).roll += ((r.precio_cierre_viejo || 0) - (r.precio_apertura_nuevo || 0)) * (r.sacos || 0) * conv;
   });
 
-  const rows = Object.values(byMonth).sort((a,b) => b.mes.localeCompare(a.mes));
-  const grandTotal = rows.reduce((s,r) => s+r.pnl, 0);
+  const meses = Object.keys(M).sort(); // ascendente (enero → julio)
+  if (!meses.length) { el.innerHTML = '<div class="pnl-loading">Sin P&L realizado aún.</div>'; return; }
+
+  const optPremium = OPTIONS.filter(o => o.estado === 'OPEN').reduce((s,o) => s + (o.premium_usd || 0), 0);
+  const cel = n => `<td class="text-right mono" style="color:${n>=0?'var(--ok)':'var(--crit)'}">${fmtUSD(n)}</td>`;
+
+  let tF=0, tO=0, tR=0;
+  const rows = meses.map(m => {
+    const x = M[m], neto = x.fut + x.opc + x.roll;
+    tF += x.fut; tO += x.opc; tR += x.roll;
+    return `<tr><td class="mono" style="font-weight:500">${m}</td>${cel(x.fut)}${cel(x.opc)}${cel(x.roll)}` +
+      `<td class="text-right mono" style="font-weight:700;color:${neto>=0?'var(--ok)':'var(--crit)'}">${fmtUSD(neto)}</td></tr>`;
+  }).join('');
+  const tNeto = tF + tO + tR;
 
   el.innerHTML = `<table>
-    <thead><tr>
-      <th>Mes de cierre</th>
-      <th class="text-right">Cierres</th>
-      <th class="text-right">Sacos</th>
-      <th class="text-right">P&amp;L Realizado</th>
-    </tr></thead>
-    <tbody>
-    ${rows.map(r => `<tr>
-      <td class="mono" style="font-weight:500">${r.mes}</td>
-      <td class="text-right mono">${r.count}</td>
-      <td class="text-right mono">${fmt(r.sacos)}</td>
-      <td class="text-right mono" style="color:${r.pnl>=0?'var(--ok)':'var(--crit)'};font-weight:500">
-        ${fmtUSD(r.pnl)}
-      </td>
-    </tr>`).join('')}
-    <tr style="border-top:2px solid var(--sand);font-weight:600">
-      <td class="mono">TOTAL</td>
-      <td class="text-right mono">${rows.reduce((s,r)=>s+r.count,0)}</td>
-      <td class="text-right mono">${fmt(rows.reduce((s,r)=>s+r.sacos,0))}</td>
-      <td class="text-right mono" style="color:${grandTotal>=0?'var(--ok)':'var(--crit)'};font-weight:600">
-        ${fmtUSD(grandTotal)}
-      </td>
+    <thead><tr><th>Mes</th><th class="text-right">Futuros</th><th class="text-right">Opciones</th>
+      <th class="text-right">Rolls</th><th class="text-right">Neto</th></tr></thead>
+    <tbody>${rows}
+    <tr style="border-top:2px solid var(--sand);font-weight:700">
+      <td class="mono">TOTAL</td>${cel(tF)}${cel(tO)}${cel(tR)}
+      <td class="text-right mono" style="font-weight:700;color:${tNeto>=0?'var(--ok)':'var(--crit)'}">${fmtUSD(tNeto)}</td>
     </tr>
-    </tbody>
-  </table>`;
+    </tbody></table>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.7">
+      + Premium de opciones abiertas (no atribuible a un mes): <strong>${fmtUSD(optPremium)}</strong><br>
+      = <strong>P&L neto total: <span style="color:${(tNeto+optPremium)>=0?'var(--ok)':'var(--crit)'}">${fmtUSD(tNeto+optPremium)}</span></strong> (coincide con el dashboard)
+    </div>`;
 }
 
 // ── Margen por contrato ───────────────────────────────────────────────

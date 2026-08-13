@@ -3991,6 +3991,9 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
       <div id="fx-transferencias" class="tab-panel" style="display:none">
         <div class="section-title">Transferencias Intercompany</div>
 
+        <!-- Resumen consolidado (por monetizar en USD) -->
+        <div id="fx-transfer-resumen" style="margin-bottom:16px"></div>
+
         <!-- Pendientes banner -->
         <div id="fx-transfer-pendientes" style="margin-bottom:16px"></div>
 
@@ -8121,6 +8124,7 @@ async function loadFxTransferencias() {
     FX_TRANSFERENCIAS = data || [];
     renderFxTransferencias();
     renderTransferPendientes();
+    renderTransferResumen();
   } catch(e) { console.warn('loadFxTransferencias:', e.message); }
 }
 
@@ -8161,7 +8165,7 @@ function renderFxTransferencias() {
     wrap.innerHTML = '<div class="empty"><div class="empty-icon">↑</div><h3>Sin transferencias</h3></div>';
     return;
   }
-  const total = FX_TRANSFERENCIAS.reduce((s,t)=>s+(t.monto||0),0);
+  const total = FX_TRANSFERENCIAS.filter(t=>t.estado!=='CANCELADA').reduce((s,t)=>s+(t.monto||0),0);
   wrap.innerHTML = `<div class="table-scroll-y"><table>
     <thead><tr>
       <th>ID</th><th>Empresa</th><th>Divisa</th>
@@ -8170,9 +8174,10 @@ function renderFxTransferencias() {
     </tr></thead>
     <tbody>
     ${FX_TRANSFERENCIAS.map(t => {
-      const estadoColor = t.estado==='PENDIENTE' ? '#F59E0B' : 'var(--ok)';
-      const estadoBg    = t.estado==='PENDIENTE' ? '#FEF3C7' : 'var(--ok-bg)';
-      return `<tr>
+      const isCanc = t.estado==='CANCELADA';
+      const estadoColor = isCanc ? 'var(--muted)' : t.estado==='PENDIENTE' ? '#F59E0B' : 'var(--ok)';
+      const estadoBg    = isCanc ? '#ededed'     : t.estado==='PENDIENTE' ? '#FEF3C7' : 'var(--ok-bg)';
+      return `<tr style="${isCanc?'opacity:.55':''}">
         <td class="mono" style="font-size:10px">${t.id}</td>
         <td style="font-weight:500">${t.fx_clientes?.nombre||t.cliente_id||'—'}</td>
         <td class="mono">${t.divisa}</td>
@@ -8186,6 +8191,7 @@ function renderFxTransferencias() {
         <td style="white-space:nowrap">
           ${t.estado==='PENDIENTE'
             ? `<button class="process-btn" onclick="monetizarTransferencia('${t.id}')">Monetizar</button> `
+              + `<button class="del-btn" onclick="confirmCancelFxTransfer('${t.id}')">Cancelar</button> `
             : ''}
           <button class="del-btn" onclick="confirmDeleteFxTransfer('${t.id}')">Eliminar</button>
         </td>
@@ -8344,6 +8350,67 @@ async function deleteFxTransfer(id) {
     closeModal();
     await loadFxTransferencias();
   } catch(e) { toast('Error: '+e.message,'err'); }
+}
+
+// Cancelar (suave): marca CANCELADA y conserva el registro en el historial
+function confirmCancelFxTransfer(id) {
+  const body = `<div style="font-size:13px">¿Cancelar la transferencia <strong>${id}</strong>?<br>
+    Quedará marcada como <strong>CANCELADA</strong> (se conserva en el historial y no cuenta como pendiente).</div>`;
+  const footer = `
+    <button class="btn btn-ghost" onclick="closeModal()">No</button>
+    <button class="btn" style="background:var(--crit);color:#fff"
+      onclick="cancelarTransferencia('${id}')">Sí, cancelar</button>`;
+  openModal('Cancelar transferencia', body, footer);
+}
+
+async function cancelarTransferencia(id) {
+  try {
+    const { error } = await sb.from('fx_transferencias').update({ estado:'CANCELADA' }).eq('id', id);
+    if (error) throw error;
+    toast('Transferencia cancelada','ok');
+    closeModal();
+    await loadFxTransferencias();
+  } catch(e) { toast('Error: '+e.message,'err'); }
+}
+
+// Tasa cruzada divisa→USD (promedio ponderado de monetizaciones); USD=1; 0 si no hay tasa
+function fxCrossToUsd(divisa) {
+  if (divisa === 'USD') return 1;
+  const mons = (FX_MONETIZACIONES || []).filter(m => m.divisa_origen === divisa && m.tasa_a_usd);
+  const monto = mons.reduce((s,m) => s + (m.monto_divisa || 0), 0);
+  const tasaW = mons.reduce((s,m) => s + ((m.tasa_a_usd || 0) * (m.monto_divisa || 0)), 0);
+  return monto > 0 ? tasaW / monto : 0;
+}
+
+// Card consolidada: total por monetizar convertido a USD
+function renderTransferResumen() {
+  const el = v('fx-transfer-resumen');
+  if (!el) return;
+  const pend = FX_TRANSFERENCIAS.filter(t => t.estado === 'PENDIENTE');
+  if (!pend.length) { el.innerHTML = ''; return; }
+
+  const byDiv = {};
+  pend.forEach(t => { const d = t.divisa || '?'; byDiv[d] = (byDiv[d] || 0) + (t.monto || 0); });
+
+  let totalUSD = 0; const sinTasa = [];
+  const chips = Object.keys(byDiv).sort().map(div => {
+    const monto = byDiv[div], r = fxCrossToUsd(div);
+    let extra = '';
+    if (r > 0) { totalUSD += monto * r; extra = div === 'USD' ? '' : ' → $' + fmt(monto * r, 0) + ' USD'; }
+    else { sinTasa.push(div); extra = ' → sin tasa'; }
+    return '<span style="background:rgba(255,255,255,.12);border-radius:999px;padding:4px 11px;font-size:11px;font-family:var(--mono)">' +
+      div + ' $' + fmt(monto, 0) + extra + '</span>';
+  }).join(' ');
+
+  el.innerHTML =
+    '<div style="background:var(--navy);border-radius:12px;padding:16px 18px;color:#fff">' +
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.6);margin-bottom:6px">Por monetizar · equivalente USD</div>' +
+      '<div style="font-size:30px;font-weight:700;font-family:var(--mono)">$' + fmt(totalUSD, 0) + '</div>' +
+      '<div style="font-size:11px;color:rgba(255,255,255,.7);margin:6px 0 12px">' + pend.length + ' transferencia' + (pend.length > 1 ? 's' : '') + ' pendiente' + (pend.length > 1 ? 's' : '') + ' de monetizar</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px">' + chips + '</div>' +
+      (sinTasa.length ? '<div style="font-size:10px;color:#FCD34D;margin-top:10px">⚠ Sin tasa histórica para ' + sinTasa.join(', ') + ' — no incluidas en el total. Registra una monetización de esa divisa para tener tasa.</div>' : '') +
+      '<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:8px">EUR/AUD convertidos con la tasa promedio de tus monetizaciones (aproximado).</div>' +
+    '</div>';
 }
 
 

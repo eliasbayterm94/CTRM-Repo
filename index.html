@@ -8154,6 +8154,8 @@ function renderTransferPendientes() {
             onclick="monetizarTransferencia('${t.id}')">
             💱 Monetizar
           </button>
+          <button class="del-btn" style="white-space:nowrap"
+            onclick="confirmCancelFxTransfer('${t.id}')">✕ Cancelar</button>
         </div>`).join('')}
     </div>`;
 }

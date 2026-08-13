@@ -8193,9 +8193,8 @@ function renderFxTransferencias() {
         <td style="white-space:nowrap">
           ${t.estado==='PENDIENTE'
             ? `<button class="process-btn" onclick="monetizarTransferencia('${t.id}')">Monetizar</button> `
-              + `<button class="del-btn" onclick="confirmCancelFxTransfer('${t.id}')">Cancelar</button> `
-            : ''}
-          <button class="del-btn" onclick="confirmDeleteFxTransfer('${t.id}')">Eliminar</button>
+              + `<button class="del-btn" onclick="confirmCancelFxTransfer('${t.id}')">Cancelar</button>`
+            : `<button class="del-btn" onclick="confirmDeleteFxTransfer('${t.id}')">Eliminar</button>`}
         </td>
       </tr>`;
     }).join('')}
@@ -8354,10 +8353,10 @@ async function deleteFxTransfer(id) {
   } catch(e) { toast('Error: '+e.message,'err'); }
 }
 
-// Cancelar (suave): marca CANCELADA y conserva el registro en el historial
+// Cancelar una transferencia pendiente (registrada por error / que no se realizó)
 function confirmCancelFxTransfer(id) {
   const body = `<div style="font-size:13px">¿Cancelar la transferencia <strong>${id}</strong>?<br>
-    Quedará marcada como <strong>CANCELADA</strong> (se conserva en el historial y no cuenta como pendiente).</div>`;
+    Se quitará del listado. Úsalo para una transferencia registrada por error que no se llegó a realizar.</div>`;
   const footer = `
     <button class="btn btn-ghost" onclick="closeModal()">No</button>
     <button class="btn" style="background:var(--crit);color:#fff"
@@ -8367,7 +8366,7 @@ function confirmCancelFxTransfer(id) {
 
 async function cancelarTransferencia(id) {
   try {
-    const { error } = await sb.from('fx_transferencias').update({ estado:'CANCELADA' }).eq('id', id);
+    const { error } = await sb.from('fx_transferencias').delete().eq('id', id);
     if (error) throw error;
     toast('Transferencia cancelada','ok');
     closeModal();

@@ -8248,7 +8248,11 @@ async function saveFxTransferencia() {
   if (!cliente||!monto||!fecha) return toast('Faltan campos obligatorios','err');
   const btn = v('btn-nt'); btn.disabled=true; btn.textContent='Guardando...';
   try {
-    const id = 'TRF-' + String(FX_TRANSFERENCIAS.length+1).padStart(3,'0');
+    const maxN = FX_TRANSFERENCIAS.reduce((mx,t) => {
+      const mm = /TRF-(\d+)/.exec(t.id||'');
+      return mm ? Math.max(mx, parseInt(mm[1],10)) : mx;
+    }, 0);
+    const id = 'TRF-' + String(maxN+1).padStart(3,'0');
     const { error } = await sb.from('fx_transferencias').insert({
       id, cliente_id: cliente, divisa, monto,
       fecha_envio: fecha,

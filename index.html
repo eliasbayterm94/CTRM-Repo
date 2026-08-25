@@ -4103,6 +4103,9 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
 const KG_SACO   = 70;
 const KG_KC     = 17009.73;
 const LB_PER_KG = 2.20462;
+// Netlify reemplaza __APP_VERSION__ por el SHA del commit en cada deploy.
+// Debe declararse ARRIBA: lo lee msUpdateGreeting() durante el arranque.
+const APP_VERSION = '__APP_VERSION__';
 
 // ── State ──────────────────────────────────────────────────────────────
 let sb = null;
@@ -14416,9 +14419,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 // ── Versión de la app + auto-actualización ────────────────────────────
-// __APP_VERSION__ lo reemplaza Netlify en cada deploy con el SHA del commit
-// (ver command en netlify.toml). No editar a mano.
-const APP_VERSION = '__APP_VERSION__';
+// APP_VERSION se declara al inicio del script (junto a las constantes).
 
 async function checkAppVersion() {
   try {

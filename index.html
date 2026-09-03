@@ -4812,6 +4812,7 @@ function renderHedgesList() {
         <td class="mono${h.days_to_ltd<=5?' crit':h.days_to_ltd<=15?' warn':''}">${h.days_to_ltd??'—'}</td>
         <td>${statusPill(h.roll_status)}</td>
         <td>
+          <button class="edit-btn" style="color:var(--navy);border-color:var(--navy)" onclick="openHedgePnL('${h.id}')">P&L</button>
           <button class="edit-btn" onclick="openEditHedge('${h.id}')">Editar</button>
           ${h.sacos_abiertos > 0 && h.contract_id === 'FC-PROP-001' ?
             `<button class="edit-btn" style="color:var(--ok);border-color:var(--ok)" onclick="openCerrarPosicion('${h.id}')">Cerrar posición</button>` : ''}
@@ -4827,6 +4828,57 @@ function renderHedgesList() {
         <td colspan="5"></td>
       </tr></tfoot>
       </table></div>`;
+}
+
+function openHedgePnL(hedgeId) {
+  const h = HEDGES.find(x => x.id === hedgeId);
+  if (!h) { toast('Hedge no encontrado','err'); return; }
+  const ct = CONTRACTS.find(c => c.id === h.contract_id);
+  const conv = KG_SACO * LB_PER_KG / 100;
+
+  // Realizado: cierres de este hedge (v_pnl)
+  const cierres = (CLOSURES || []).filter(c => c.hedge_id === hedgeId)
+    .sort((a,b) => (b.fecha_cierre||'').localeCompare(a.fecha_cierre||''));
+  const realizado = cierres.reduce((s,c) => s + (c.pnl_usd || 0), 0);
+  const sacosCerr = cierres.reduce((s,c) => s + (c.sacos || 0), 0);
+
+  // No realizado: posición abierta a mercado (KC actual)
+  const mkt = KC_PRICES[h.kc_month + h.kc_year];
+  const abierto = h.sacos_abiertos || 0;
+  const noReal = (mkt && abierto) ? (mkt - h.precio_entrada_clb) * abierto * conv : null;
+  const total = realizado + (noReal || 0);
+
+  const line = (lbl, val, strong) =>
+    '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;' +
+      (strong ? 'border-top:2px solid var(--sand);font-weight:700;margin-top:4px' : '') + '">' +
+      '<span>' + lbl + '</span>' +
+      '<span class="mono" style="color:' + (val>=0?'var(--ok)':'var(--crit)') + '">' + (val>=0?'+':'') + fmtUSD(val) + '</span></div>';
+
+  const cierresHtml = cierres.length
+    ? cierres.map(c =>
+        '<tr><td class="mono" style="font-size:10px">' + (c.fecha_cierre||'—') + '</td>' +
+        '<td class="text-right mono">' + fmt(c.sacos) + '</td>' +
+        '<td class="text-right mono">' + fmt(c.precio_cierre_clb,2) + '</td>' +
+        '<td class="text-right mono" style="color:' + ((c.pnl_usd||0)>=0?'var(--ok)':'var(--crit)') + '">' + fmtUSD(c.pnl_usd||0) + '</td></tr>').join('')
+    : '<tr><td colspan="4" style="color:var(--muted);padding:8px">Sin cierres aún</td></tr>';
+
+  const body =
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.7">' +
+      '<strong>' + h.id + '</strong> · ' + (ct?.cliente || h.contract_id) + ' · KC ' + h.kc_month + h.kc_year +
+      ' · entrada <strong>' + fmt(h.precio_entrada_clb,2) + '</strong> c/lb<br>' +
+      'Sacos: ' + fmt(h.sacos) + ' tot · ' + fmt(abierto) + ' abiertos · ' + fmt(sacosCerr) + ' cerrados' +
+    '</div>' +
+    line('P&L realizado (' + cierres.length + ' cierres)', realizado) +
+    (noReal != null
+      ? line('P&L no realizado (mercado ' + fmt(mkt,2) + ' c/lb)', noReal)
+      : '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;color:var(--muted)"><span>P&L no realizado</span><span>sin precio KC cargado</span></div>') +
+    line('P&L total', total, true) +
+    '<div style="font-size:11px;font-weight:700;color:var(--navy);margin:16px 0 6px">Cierres de este hedge</div>' +
+    '<div class="table-wrap"><table><thead><tr><th>Fecha</th><th class="text-right">Sacos</th>' +
+      '<th class="text-right">Precio cierre</th><th class="text-right">P&L</th></tr></thead>' +
+      '<tbody>' + cierresHtml + '</tbody></table></div>';
+
+  openModal('P&L · ' + h.id, body, '<button class="btn btn-primary" onclick="closeModal()">Cerrar</button>');
 }
 
 function renderPurchasesList() {

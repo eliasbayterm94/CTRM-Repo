@@ -40,6 +40,12 @@ create table if not exists commercial_closures (
   created_at       timestamptz default now()
 );
 
+-- RLS: acceso abierto (igual que las demás tablas de la app, que escriben con la anon key).
+-- Sin esto, insertar cierres "no en bolsa" falla con "violates row-level security policy".
+alter table commercial_closures enable row level security;
+drop policy if exists commercial_closures_all on commercial_closures;
+create policy commercial_closures_all on commercial_closures for all using (true) with check (true);
+
 -- P&L comercial realizado (mismo signo que el no realizado: baja = ganancia)
 create or replace view v_pnl_comercial as
 select cc.*,
@@ -92,7 +98,8 @@ begin
     where h.kc_month = p_kc_month and h.kc_year = p_kc_year and h.sacos_abiertos > 0;
   select coalesce(sum(open_sacos),0) into v_total_bolsa from _bolsa;
 
-  -- Universo NO-BOLSA: contratos fijados con exposición sin hedge
+  -- Universo NO-BOLSA: contratos fijados con exposición sin hedge.
+  -- NO se filtra por mes: al no tener hedge no dependen del mes de bolsa.
   create temp table _nob on commit drop as
     select c.id as contract_id, c.cliente, c.precio_kc_fijado,
            greatest(c.sacos_abiertos - coalesce(hh.hedge_open,0),0)::int as exp_sacos
@@ -102,8 +109,7 @@ begin
       from v_hedge_positions where sacos_abiertos > 0 group by contract_id
     ) hh on hh.contract_id = c.id
     where c.precio_kc_fijado is not null
-      and greatest(c.sacos_abiertos - coalesce(hh.hedge_open,0),0) > 0
-      and c.kc_month = p_kc_month and c.kc_year = p_kc_year;
+      and greatest(c.sacos_abiertos - coalesce(hh.hedge_open,0),0) > 0;
   select coalesce(sum(exp_sacos),0) into v_total_nobolsa from _nob;
 
   -- Validaciones

@@ -3838,6 +3838,12 @@ th.sort-desc::after{content:' ↓';opacity:1;color:var(--yellow);}
           <div id="fx-contratos-wrap"><div class="pnl-loading">Cargando...</div></div>
         </div>
 
+        <!-- Anticipos section -->
+        <div class="cfo-section" style="margin-bottom:20px">
+          <div class="cfo-header"><h3>Anticipos</h3></div>
+          <div id="fx-anticipos-wrap"><div class="pnl-loading">Cargando...</div></div>
+        </div>
+
         <div class="filter-bar">
           <select id="ffob-cliente" onchange="renderFxFacturas()"><option value="">Todos los clientes</option></select>
           <select id="ffob-divisa" onchange="renderFxFacturas()"><option value="">Todas las divisas</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="AUD">AUD</option></select>
@@ -8626,6 +8632,147 @@ function renderFxContratos() {
   </table></div>`;
 }
 
+// ── Lista de Anticipos (editar / borrar) ───────────────────────────────
+function anticipoAplicado(anticipoId) {
+  return FX_ANTICIPO_FACTURAS
+    .filter(af => af.anticipo_id === anticipoId)
+    .reduce((s, af) => s + (af.monto_aplicado_usd || 0), 0);
+}
+
+function renderFxAnticipos() {
+  const wrap = v('fx-anticipos-wrap');
+  if (!wrap) return;
+  if (!FX_ANTICIPOS || FX_ANTICIPOS.length === 0) {
+    wrap.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:10px 0">Sin anticipos registrados. Agrégalos desde un contrato con el botón «+ Anticipo».</div>';
+    return;
+  }
+  const rows = FX_ANTICIPOS.map(a => {
+    const c = FX_CONTRATOS.find(x => x.id === a.contrato_id);
+    const cliente = c ? (c.cliente_display || c.cliente_nombre || '—') : '—';
+    const contratoNum = c ? c.numero_contrato : (a.contrato_id || '—');
+    const divisa = c ? c.divisa : '';
+    const aplicado = anticipoAplicado(a.id);
+    const disponible = Math.max(0, (a.monto || 0) - aplicado);
+    return `<tr>
+      <td class="mono" style="font-weight:600">${contratoNum}</td>
+      <td style="font-size:11px">${cliente}</td>
+      <td class="mono" style="font-size:11px">${a.fecha_recibo || '—'}</td>
+      <td class="text-right mono" style="font-weight:500">$${fmt(a.monto,0)} ${divisa}</td>
+      <td class="text-right mono" style="color:${aplicado>0?'var(--roll)':'var(--muted)'}">${aplicado>0?'$'+fmt(aplicado,0):'—'}</td>
+      <td class="text-right mono" style="color:${disponible>0?'var(--ok)':'var(--muted)'};font-weight:600">${disponible>0?'$'+fmt(disponible,0):'✓'}</td>
+      <td style="font-size:10px;color:var(--muted)">${a.monetizacion_id || '—'}</td>
+      <td style="font-size:10px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.notas || '—'}</td>
+      <td style="white-space:nowrap">
+        <button class="edit-btn" onclick="openEditAnticipo('${a.id}')">Editar</button>
+        <button class="edit-btn" style="background:var(--crit-bg,#fdecec);color:var(--crit);border-color:var(--crit)" onclick="confirmDeleteAnticipo('${a.id}')">Borrar</button>
+      </td>
+    </tr>`;
+  }).join('');
+  const totMonto = FX_ANTICIPOS.reduce((s,a)=>s+(a.monto||0),0);
+  const totApl   = FX_ANTICIPOS.reduce((s,a)=>s+anticipoAplicado(a.id),0);
+  wrap.innerHTML = `<div style="overflow-x:auto"><table class="stress-table">
+    <thead><tr>
+      <th># Contrato</th><th>Cliente</th><th>Fecha recibo</th>
+      <th class="text-right">Monto</th>
+      <th class="text-right">Aplicado</th>
+      <th class="text-right">Disponible</th>
+      <th>Monetización</th><th>Notas</th><th>Acciones</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr>
+      <td colspan="3" class="mono" style="padding:8px 10px;font-weight:700">TOTAL</td>
+      <td class="text-right mono" style="font-weight:700">$${fmt(totMonto,0)}</td>
+      <td class="text-right mono" style="color:var(--roll)">$${fmt(totApl,0)}</td>
+      <td class="text-right mono" style="color:var(--ok);font-weight:700">$${fmt(Math.max(0,totMonto-totApl),0)}</td>
+      <td colspan="3"></td>
+    </tr></tfoot>
+  </table></div>`;
+}
+
+function openEditAnticipo(id) {
+  const a = FX_ANTICIPOS.find(x => x.id === id);
+  if (!a) return toast('Anticipo no encontrado','err');
+  const c = FX_CONTRATOS.find(x => x.id === a.contrato_id);
+  const aplicado = anticipoAplicado(id);
+  const monetOpts = FX_MONETIZACIONES
+    .filter(m => !c || m.cliente_id === c.cliente_id)
+    .map(m => `<option value="${m.id}" ${m.id===a.monetizacion_id?'selected':''}>${m.id} — $${fmt(m.monto_usd||m.monto_divisa,0)} — ${m.fecha}</option>`)
+    .join('');
+  const body = `
+    <div style="background:var(--cream);border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:14px;line-height:1.7">
+      <strong>${c?c.numero_contrato:a.contrato_id}</strong> — ${c?(c.cliente_display||c.cliente_nombre):'—'}<br>
+      ${aplicado>0?`<span style="color:var(--warn)">Ya hay $${fmt(aplicado,0)} aplicado a facturas. El monto no puede quedar por debajo de esto.</span>`:'Anticipo sin aplicaciones a facturas.'}
+    </div>
+    <div class="form-grid">
+      <div class="fl"><label>Monto anticipo <span class="req">*</span></label>
+        <input id="ea-monto" type="number" step="0.01" value="${a.monto||''}"></div>
+      <div class="fl"><label>Fecha recibo <span class="req">*</span></label>
+        <input id="ea-fecha" type="date" value="${a.fecha_recibo||today()}"></div>
+      <div class="fl form-grid one"><label>Vincular a monetización (opcional)</label>
+        <select id="ea-moneta"><option value="">Sin monetización</option>${monetOpts}</select></div>
+      <div class="fl form-grid one"><label>Notas</label>
+        <textarea id="ea-notas" rows="2">${a.notas||''}</textarea></div>
+    </div>`;
+  const footer = `
+    <button class="btn-danger-outline" onclick="confirmDeleteAnticipo('${id}')">Eliminar</button>
+    <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="saveEditAnticipo('${id}')">Guardar</button>`;
+  openModal('Editar Anticipo — '+id, body, footer);
+}
+
+async function saveEditAnticipo(id) {
+  const a = FX_ANTICIPOS.find(x => x.id === id);
+  if (!a) return toast('Anticipo no encontrado','err');
+  const monto = parseFloat(v('ea-monto')?.value||0);
+  const fecha = v('ea-fecha')?.value;
+  if (!monto || !fecha) return toast('Faltan campos','err');
+  const aplicado = anticipoAplicado(id);
+  if (monto < aplicado)
+    return toast(`El monto no puede ser menor a lo ya aplicado ($${fmt(aplicado,0)})`,'err');
+  const btn = v('edit-modal')?.querySelector('.btn-primary');
+  if (btn) { btn.disabled=true; btn.textContent='Guardando...'; }
+  try {
+    const { error } = await sb.from('fx_anticipos').update({
+      monto, fecha_recibo: fecha,
+      monetizacion_id: v('ea-moneta')?.value || null,
+      notas: v('ea-notas')?.value || null,
+    }).eq('id', id);
+    if (error) throw error;
+    toast('Anticipo actualizado','ok');
+    closeModal();
+    await loadFxAll();
+  } catch(e) { toast('Error: '+e.message,'err'); }
+  if (btn) { btn.disabled=false; btn.textContent='Guardar'; }
+}
+
+function confirmDeleteAnticipo(id) {
+  const a = FX_ANTICIPOS.find(x => x.id === id);
+  if (!a) return toast('Anticipo no encontrado','err');
+  const aplicado = anticipoAplicado(id);
+  if (aplicado > 0) {
+    return toast(`No se puede borrar: tiene $${fmt(aplicado,0)} aplicado a facturas. Primero quita las aplicaciones.`,'err');
+  }
+  const c = FX_CONTRATOS.find(x => x.id === a.contrato_id);
+  const body = `<div style="font-size:13px;line-height:1.8">¿Eliminar el anticipo de <strong>$${fmt(a.monto,0)}</strong>?<br>
+    <span style="color:var(--muted)">${c?c.numero_contrato:a.contrato_id} · ${a.fecha_recibo||''}</span></div>
+    <div style="margin-top:10px;padding:8px 12px;background:var(--cream);border-radius:6px;font-size:11px;color:var(--muted)">Esta acción no se puede deshacer.</div>`;
+  const footer = `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    <button class="btn" style="background:var(--crit);color:#fff" onclick="deleteAnticipo('${id}')">Eliminar</button>`;
+  openModal('Eliminar Anticipo', body, footer);
+}
+
+async function deleteAnticipo(id) {
+  const aplicado = anticipoAplicado(id);
+  if (aplicado > 0) { closeModal(); return toast('No se puede borrar: tiene aplicaciones a facturas.','err'); }
+  try {
+    const { error } = await sb.from('fx_anticipos').delete().eq('id', id);
+    if (error) throw error;
+    toast('Anticipo eliminado','ok');
+    closeModal();
+    await loadFxAll();
+  } catch(e) { toast('Error: '+e.message,'err'); }
+}
+
 // ── Nuevo contrato ─────────────────────────────────────────────────────
 function openNewFxContrato() {
   const body = `<div class="form-grid">
@@ -9471,6 +9618,7 @@ async function loadFxAll() {
     try { renderFxClientes(); }      catch(e) { console.warn('renderFxClientes:', e.message); }
     try { loadFxTransferencias(); }   catch(e) { console.warn('loadFxTransferencias:', e.message); }
     try { renderFxContratos(); }      catch(e) { console.warn('renderFxContratos:', e.message); }
+    try { renderFxAnticipos(); }      catch(e) { console.warn('renderFxAnticipos:', e.message); }
   } catch(e) {
     console.error('loadFxAll error:', e);
     toast('Error FX: ' + e.message, 'err');
@@ -9490,7 +9638,7 @@ function showFxTab(id, btn) {
   if (btn) btn.classList.add('active');
   // Per-tab actions — only render if needed, data already in memory
   if (id === 'fx-clientes') renderFxClientes();
-  if (id === 'fx-facturas') { renderFxFacturas(); renderFxContratos(); }
+  if (id === 'fx-facturas') { renderFxFacturas(); renderFxContratos(); renderFxAnticipos(); }
   if (id === 'fx-transferencias') {
     renderFxTransferencias();
     renderTransferPendientes();
